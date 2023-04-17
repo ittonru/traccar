@@ -297,6 +297,15 @@ public class NavtelecomProtocolDecoder extends BaseProtocolDecoder {
                                             Position.PREFIX_TEMP + (j + 2 - 45),
                                             (value != (byte) 0x80) ? value : null);
                                     break;
+                                case 53:
+                                    value = buf.readUnsignedShortLE();
+                                    position.set(Position.KEY_FUEL_LEVEL, (value < 65500) ? value : null);
+                                    break;
+                                    /*Но здесь грабли. 15 разряд используется для указания в % (0) или литрах (1), при данной конструкции если значение
+                                    передается в % проблем нет, но если значение будет в литрах результат будет больше на 32768.
+                                    Вроде все просто, но моего опыта в Jawa недостаточно. 
+                                    Описание протокола: https://navtelecom.ru/images/documentation/protocol/protocol_of_information_exchange_navtelecom_v5.5_%28160817%29.pdf
+                                    */
                                 case 78:
                                 case 79:
                                 case 80:
