@@ -297,6 +297,13 @@ public class NavtelecomProtocolDecoder extends BaseProtocolDecoder {
                                             Position.PREFIX_TEMP + (j + 2 - 45),
                                             (value != (byte) 0x80) ? value : null);
                                     break;
+                                case 53:
+                                    value = buf.readUnsignedShortLE();
+                                    position.set(Position.KEY_FUEL_LEVEL, BitUtil.to(value, 14));
+                                case 55:
+                                    value = buf.readUnsignedShortLE();
+                                    position.set(Position.KEY_RPM, (value < 65500) ? value : null);
+                                    break;
                                 case 78:
                                 case 79:
                                 case 80:
