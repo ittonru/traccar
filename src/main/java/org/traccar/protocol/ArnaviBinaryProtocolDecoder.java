@@ -48,6 +48,10 @@ public class ArnaviBinaryProtocolDecoder extends BaseProtocolDecoder {
     private static final byte TAG_LATITUDE = 3;
     private static final byte TAG_LONGITUDE = 4;
     private static final byte TAG_COORD_PARAMS = 5;
+    private static final byte TAG_CANLOG_PROGRAMM = 50;
+    private static final byte TAG_FUEL_P = 55;
+    private static final byte TAG_FUEL_L = 56;
+    private static final byte TAG_CAN_RPM = 57;
 
     public ArnaviBinaryProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -102,6 +106,19 @@ public class ArnaviBinaryProtocolDecoder extends BaseProtocolDecoder {
                     position.set(Position.KEY_SATELLITES, satellites & 0x0F + (satellites >> 4) & 0x0F);
                     position.setSpeed(buf.readUnsignedByte());
                     break;
+                    
+                case TAG_CANLOG_PROGRAMM:
+                    position.set("Canlog_programm", buf.readUnsignedIntLE());
+                    break;
+                case TAG_FUEL_P:
+                    position.set("FuelCan_P", buf.readUnsignedIntLE()/10);
+                    break;
+                case TAG_FUEL_L:
+                    position.set("FuelCan_L", buf.readUnsignedIntLE()/10);
+                    break;
+                case TAG_CAN_RPM:
+                    position.set("Can_RPM", buf.readUnsignedIntLE());
+                    break;               
 
                 default:
                     buf.skipBytes(4);
