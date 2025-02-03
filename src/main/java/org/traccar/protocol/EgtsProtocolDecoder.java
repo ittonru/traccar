@@ -273,17 +273,47 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                     }
 
                 } else if (type == MSG_LIQUID_LEVEL_SENSOR) {
-
-                    int flags = buf.readUnsignedByte();
-
-                    buf.readUnsignedShortLE(); // address
+                    // Обработка данных датчиков уровня жидкости
+                    int flags = buf.readUnsignedByte(); // Флаги
+                    int sensorAddress = buf.readUnsignedShortLE(); // Адрес датчика
 
                     if (BitUtil.check(flags, 3)) {
-                        position.set("liquidRaw", ByteBufUtil.hexDump(buf.readSlice(end - buf.readerIndex())));
+                        // Сырые данные (если флаг установлен)
+                        byte[] rawData = new byte[end - buf.readerIndex()];
+                        buf.readBytes(rawData);
+                        position.set("liquidRaw_" + sensorAddress, ByteBufUtil.hexDump(rawData));
                     } else {
-                        position.set("liquid", buf.readUnsignedIntLE());
+                        // Уровень жидкости (4 байта)
+                        int liquidLevel = buf.readIntLE();
+                        position.set("liquidLevel_" + sensorAddress, liquidLevel);
+
+                        // Пример интерпретации уровня жидкости (если известны единицы измерения)
+                        // position.set("liquidLevelLiters_" + sensorAddress, liquidLevel * 0.1); // Например, 0.1 литра на единицу
                     }
 
+                    // Обработка нескольких датчиков (если они есть)
+                    while (buf.readerIndex() < end) {
+                        int nextType = buf.readUnsignedByte(); // Тип следующего сообщения
+                        int nextEnd = buf.readUnsignedShortLE() + buf.readerIndex(); // Конец следующего сообщения
+
+                        if (nextType == MSG_LIQUID_LEVEL_SENSOR) {
+                            int nextFlags = buf.readUnsignedByte(); // Флаги следующего датчика
+                            int nextSensorAddress = buf.readUnsignedShortLE(); // Адрес следующего датчика
+
+                            if (BitUtil.check(nextFlags, 3)) {
+                                // Сырые данные (если флаг установлен)
+                                byte[] nextRawData = new byte[nextEnd - buf.readerIndex()];
+                                buf.readBytes(nextRawData);
+                                position.set("liquidRaw_" + nextSensorAddress, ByteBufUtil.hexDump(nextRawData));
+                            } else {
+                                // Уровень жидкости (4 байта)
+                                int nextLiquidLevel = buf.readIntLE();
+                                position.set("liquidLevel_" + nextSensorAddress, nextLiquidLevel);
+                            }
+                        }
+
+                        buf.readerIndex(nextEnd);
+                    }
                 }
 
                 buf.readerIndex(end);
