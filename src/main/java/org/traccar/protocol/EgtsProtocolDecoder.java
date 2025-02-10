@@ -33,6 +33,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,8 +44,12 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
 
     private static final Logger logger = LoggerFactory.getLogger(EgtsProtocolDecoder.class);
 
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
     public EgtsProtocolDecoder(Protocol protocol) {
         super(protocol);
+        // Запускаем периодический опрос устройства каждую минуту
+        scheduler.scheduleAtFixedRate(this::pollDeviceState, 1, 1, TimeUnit.MINUTES);
     }
 
     private boolean useObjectIdAsDeviceId = true;
@@ -136,6 +143,20 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
         }
     }
 
+    /**
+     * Отправляет команду EGTS_FLEET_GET_STATE для опроса состояния устройства.
+     */
+    private void pollDeviceState() {
+        // Здесь можно добавить логику для отправки команды EGTS_FLEET_GET_STATE
+        // Например, если у вас есть канал устройства, вы можете отправить команду через него
+        // Пример:
+        // if (channel != null) {
+        //     ByteBuf command = Unpooled.buffer();
+        //     command.writeByte(MSG_STATE_DATA); // Тип сообщения
+        //     sendResponse(channel, PT_APPDATA, 0, SERVICE_COMMANDS, MSG_STATE_DATA, command);
+         //}
+    }
+
     @Override
     protected Object decode(Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
         ByteBuf buf = (ByteBuf) msg;
@@ -215,7 +236,7 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                             getDeviceSession(
                                     channel, remoteAddress, buf.readSlice(15).toString(StandardCharsets.US_ASCII).trim());
                         }
-                        //обеспечивает работу устройств передающий первый пакет без координат и ожидающих готовность сервера
+
                         ByteBuf response = Unpooled.buffer();
                         response.writeByte(0); // success
                         sendResponse(channel, PT_APPDATA, recordIndex, serviceType, MSG_RESULT_CODE, response);
@@ -249,8 +270,6 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                         }
                         break;
 
-                    // Обработка других типов сообщений...
-
                     case MSG_EXT_POS_DATA:
                         // Обработка дополнительных данных о координатах
                         int extPosFlags = buf.readUnsignedByte();
@@ -269,6 +288,28 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                         }
                         break;
 
+                    case MSG_STATE_DATA:
+                        // Обработка данных о состоянии устройства
+                        int stateFlags = buf.readUnsignedByte();
+
+                        if (BitUtil.check(stateFlags, 0)) {
+                            position.set(Position.KEY_BATTERY, buf.readUnsignedByte()); // Уровень заряда батареи
+                        }
+                        if (BitUtil.check(stateFlags, 1)) {
+                            position.set(Position.KEY_INPUT, buf.readUnsignedByte()); // Состояние входов
+                        }
+                        if (BitUtil.check(stateFlags, 2)) {
+                            position.set(Position.KEY_OUTPUT, buf.readUnsignedByte()); // Состояние выходов
+                        }
+                        if (BitUtil.check(stateFlags, 3)) {
+                            position.set("adc1", buf.readUnsignedShortLE()); // Значение АЦП 1
+                        }
+                        if (BitUtil.check(stateFlags, 4)) {
+                            position.set("adc2", buf.readUnsignedShortLE()); // Значение АЦП 2
+                        }
+                        break;
+
+                    // Обработка других типов сообщений...
                     case MSG_AD_SENSORS_DATA:
                         // Обработка данных аналоговых датчиков
                         int inputMask = buf.readUnsignedByte();
@@ -355,6 +396,7 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                             buf.readerIndex(nextEnd);
                         }
                         break;
+                    //end Обработкаи других типов сообщений...
 
                     default:
                         logger.warn("Unknown packet type: {}", type);
@@ -383,7 +425,13 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
         ackResponse.writeByte(0); // Успешное завершение
         sendResponse(channel, PT_RESPONSE, packetId, SERVICE_TELEDATA, MSG_RECORD_RESPONSE, ackResponse);
 
+        // Отправляем команду EGTS_SR_COMMAND_DATA
+        ByteBuf commandResponse = Unpooled.buffer();
+        commandResponse.writeByte(0); // Успешное завершение
+        sendResponse(channel, PT_APPDATA, packetId, SERVICE_COMMANDS, MSG_RECORD_RESPONSE, commandResponse);
+
         return positions.isEmpty() ? null : positions;
     }
 }
+
 
