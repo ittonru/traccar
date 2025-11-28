@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.inject.name.Named;
 import org.traccar.helper.Log;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,19 +41,9 @@ public class Config {
     @Inject
     public Config(@Named("configFile") String file) throws IOException {
         try {
-            Properties mainProperties = new Properties();
             try (InputStream inputStream = new FileInputStream(file)) {
-                mainProperties.loadFromXML(inputStream);
+                properties.loadFromXML(inputStream);
             }
-
-            String defaultConfigFile = mainProperties.getProperty("config.default");
-            if (defaultConfigFile != null) {
-                try (InputStream inputStream = new FileInputStream(defaultConfigFile)) {
-                    properties.loadFromXML(inputStream);
-                }
-            }
-
-            properties.putAll(mainProperties); // override defaults
 
             useEnvironmentVariables = Boolean.parseBoolean(System.getenv("CONFIG_USE_ENVIRONMENT_VARIABLES"))
                     || Boolean.parseBoolean(properties.getProperty("config.useEnvironmentVariables"));
@@ -102,7 +92,13 @@ public class Config {
     }
 
     public boolean getBoolean(ConfigKey<Boolean> key) {
-        return Boolean.parseBoolean(getString(key.getKey()));
+        String value = getString(key.getKey());
+        if (value != null) {
+            return Boolean.parseBoolean(value);
+        } else {
+            Boolean defaultValue = key.getDefaultValue();
+            return Objects.requireNonNullElse(defaultValue, false);
+        }
     }
 
     public int getInteger(ConfigKey<Integer> key) {

@@ -24,13 +24,14 @@ import org.traccar.TrackerServer;
 import org.traccar.config.Config;
 import org.traccar.model.Command;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 public class EasyTrackProtocol extends BaseProtocol {
 
     @Inject
     public EasyTrackProtocol(Config config) {
         setSupportedDataCommands(
+                Command.TYPE_CUSTOM,
                 Command.TYPE_ENGINE_STOP,
                 Command.TYPE_ENGINE_RESUME,
                 Command.TYPE_ALARM_ARM,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.traccar.api.security.ServiceAccountUser;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 import org.traccar.helper.DateUtil;
@@ -28,11 +29,11 @@ import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Request;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.Entity;
-import javax.ws.rs.core.Form;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.core.Form;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
@@ -57,6 +58,7 @@ public class StatisticsManager {
 
     private final Set<Long> users = new HashSet<>();
     private final Map<Long, String> deviceProtocols = new HashMap<>();
+    private final Map<Long, Integer> deviceMessages = new HashMap<>();
 
     private int requests;
     private int messagesReceived;
@@ -100,6 +102,7 @@ public class StatisticsManager {
 
                 users.clear();
                 deviceProtocols.clear();
+                deviceMessages.clear();
                 requests = 0;
                 messagesReceived = 0;
                 messagesStored = 0;
@@ -116,7 +119,7 @@ public class StatisticsManager {
             }
 
             String url = config.getString(Keys.SERVER_STATISTICS);
-            if (url != null) {
+            if (url != null && !url.isEmpty()) {
                 String time = DateUtil.formatDate(statistics.getCaptureTime());
 
                 Form form = new Form();
@@ -138,6 +141,13 @@ public class StatisticsManager {
                         LOGGER.warn("Failed to serialize protocols", e);
                     }
                 }
+                if (!statistics.getAttributes().isEmpty()) {
+                    try {
+                        form.param("attributes", objectMapper.writeValueAsString(statistics.getAttributes()));
+                    } catch (JsonProcessingException e) {
+                        LOGGER.warn("Failed to serialize attributes", e);
+                    }
+                }
 
                 client.target(url).request().async().post(Entity.form(form));
             }
@@ -147,7 +157,7 @@ public class StatisticsManager {
     public synchronized void registerRequest(long userId) {
         checkSplit();
         requests += 1;
-        if (userId != 0) {
+        if (userId != 0 && userId != ServiceAccountUser.ID) {
             users.add(userId);
         }
     }
@@ -162,7 +172,16 @@ public class StatisticsManager {
         messagesStored += 1;
         if (deviceId != 0) {
             deviceProtocols.put(deviceId, protocol);
+            deviceMessages.merge(deviceId, 1, Integer::sum);
         }
+    }
+
+    public synchronized int messageStoredCount() {
+        return messagesStored;
+    }
+
+    public synchronized int messageStoredCount(long deviceId) {
+        return deviceMessages.getOrDefault(deviceId, 0);
     }
 
     public synchronized void registerMail() {

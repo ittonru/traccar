@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2012 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,8 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
     }
 
     private static final Pattern PATTERN_GPRMC = new PatternBuilder()
-            .text("$GPRMC,")
+            .text("$")
+            .expression("G[PLN]RMC,")
             .number("(dd)(dd)(dd).?d*,")         // time (hhmmss)
             .expression("([AV]),")               // validity
             .number("(dd)(dd.d+),")              // latitude
@@ -64,12 +65,29 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
             .compile();
 
     private static final Pattern PATTERN_GPGGA = new PatternBuilder()
-            .text("$GPGGA,")
+            .text("$")
+            .expression("G[PLN]GGA,")
             .number("(dd)(dd)(dd).?d*,")         // time (hhmmss)
             .number("(d+)(dd.d+),")              // latitude
             .expression("([NS]),")
             .number("(d+)(dd.d+),")              // longitude
             .expression("([EW]),")
+            .number("(d+),")                     // fix quality
+            .number("(d+),")                     // satellites
+            .number("(d+.?d*),")                 // hdop
+            .number("(-?d+.?d*),")               // altitude
+            .any()
+            .compile();
+
+    private static final Pattern PATTERN_GPGLL = new PatternBuilder()
+            .text("$")
+            .expression("G[PLN]GLL,")
+            .number("(d+)(dd.d+),")              // latitude
+            .expression("([NS]),")
+            .number("(d+)(dd.d+),")              // longitude
+            .expression("([EW]),")
+            .number("(dd)(dd)(dd).?d*,")         // time (hhmmss)
+            .expression("([AV]),")               // validity
             .any()
             .compile();
 
@@ -208,7 +226,7 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
             position.setDeviceId(deviceSession.getDeviceId());
 
             position.set(Position.KEY_IGNITION, parser.hasNext() && parser.next().equals("1"));
-            position.set(Position.KEY_FUEL_LEVEL, parser.nextInt(0));
+            position.set(Position.KEY_FUEL, parser.nextInt(0));
             position.set(Position.KEY_BATTERY, parser.nextInt());
         }
 
@@ -239,12 +257,38 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
 
         DateBuilder dateBuilder = new DateBuilder()
                 .setCurrentDate()
+                .setTime(parser.nextInt(), parser.nextInt(), parser.nextInt());
+        position.setTime(dateBuilder.getDate());
+
+        position.setLatitude(parser.nextCoordinate());
+        position.setLongitude(parser.nextCoordinate());
+        position.setValid(parser.nextInt() > 0);
+        position.set(Position.KEY_SATELLITES, parser.nextInt());
+        position.set(Position.KEY_HDOP, parser.nextDouble());
+        position.setAltitude(parser.nextDouble());
+
+        return position;
+    }
+
+    private Position decodeGpgll(DeviceSession deviceSession, String sentence) {
+
+        Parser parser = new Parser(PATTERN_GPGLL, sentence);
+        if (!parser.matches()) {
+            return null;
+        }
+
+        Position position = new Position(getProtocolName());
+        position.setDeviceId(deviceSession.getDeviceId());
+
+        position.setLatitude(parser.nextCoordinate());
+        position.setLongitude(parser.nextCoordinate());
+
+        DateBuilder dateBuilder = new DateBuilder()
+                .setCurrentDate()
                 .setTime(parser.nextInt(0), parser.nextInt(0), parser.nextInt(0));
         position.setTime(dateBuilder.getDate());
 
-        position.setValid(true);
-        position.setLatitude(parser.nextCoordinate());
-        position.setLongitude(parser.nextCoordinate());
+        position.setValid(parser.next().equals("A"));
 
         return position;
     }
@@ -282,13 +326,13 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
         position.setTime(parser.nextDateTime());
 
         position.setValid(parser.next().equals("A"));
-        position.setLatitude(parser.nextDouble(0));
-        position.setLongitude(parser.nextDouble(0));
-        position.setSpeed(parser.nextDouble(0));
-        position.setCourse(parser.nextDouble(0));
-        position.setAltitude(parser.nextDouble(0));
+        position.setLatitude(parser.nextDouble());
+        position.setLongitude(parser.nextDouble());
+        position.setSpeed(parser.nextDouble());
+        position.setCourse(parser.nextDouble());
+        position.setAltitude(parser.nextDouble());
 
-        position.set(Position.KEY_BATTERY, parser.nextDouble(0));
+        position.set(Position.KEY_BATTERY, parser.nextDouble());
 
         return position;
     }
@@ -418,9 +462,8 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
             sentence = sentence.substring(index);
         } else {
             deviceSession = getDeviceSession(channel, remoteAddress);
-            if (deviceSession == null && remoteAddress instanceof InetSocketAddress) {
-                String host = ((InetSocketAddress) remoteAddress).getHostString();
-                deviceSession = getDeviceSession(channel, remoteAddress, host);
+            if (deviceSession == null && remoteAddress instanceof InetSocketAddress inetSocketAddress) {
+                deviceSession = getDeviceSession(channel, remoteAddress, inetSocketAddress.getHostString());
             }
         }
 
@@ -444,10 +487,12 @@ public class T55ProtocolDecoder extends BaseProtocolDecoder {
             }
         } else if (sentence.matches("^[0-9A-F]+$")) {
             getDeviceSession(channel, remoteAddress, sentence);
-        } else if (sentence.startsWith("$GPRMC")) {
+        } else if (sentence.startsWith("RMC", 3)) {
             return decodeGprmc(deviceSession, sentence, remoteAddress, channel);
-        } else if (sentence.startsWith("$GPGGA") && deviceSession != null) {
+        } else if (sentence.startsWith("GGA", 3) && deviceSession != null) {
             return decodeGpgga(deviceSession, sentence);
+        } else if (sentence.startsWith("GLL", 3) && deviceSession != null) {
+            return decodeGpgll(deviceSession, sentence);
         } else if (sentence.startsWith("$GPRMA") && deviceSession != null) {
             return decodeGprma(deviceSession, sentence);
         } else if (sentence.startsWith("$TRCCR") && deviceSession != null) {

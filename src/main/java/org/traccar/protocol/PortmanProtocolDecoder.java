@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 - 2021 Anton Tananaev (anton@traccar.org)
+ * Copyright 2020 - 2023 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,11 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
     }
 
     private static final Pattern PATTERN_STANDARD = new PatternBuilder()
+            .groupBegin()
             .text("$PTMLA,")                     // header
+            .or()
+            .text("%%")                          // header
+            .groupEnd()
             .expression("([^,]+),")              // id
             .expression("([ABCL]),")             // validity
             .number("(dd)(dd)(dd)")              // date (yymmdd)
@@ -47,12 +51,19 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
             .number("(d+),")                     // course
             .number("(?:NA|C(-?d+)),")           // temperature
             .number("(x{8}),")                   // status
-            .number("(?:NA|(d+)),")              // card id
+            .groupBegin()
+            .text("NA")
+            .or()
+            .number("F(d+)")                     // fuel
+            .or()
+            .number("(d+)")                      // card id
+            .groupEnd(",")
             .number("(d+),")                     // event
             .number("(d+),")                     // satellites
             .number("(d+.d+),")                  // odometer
-            .number("(d+),")                     // rssi
-            .number("(?:G(d+)|[^,]*)")           // fuel
+            .number("(d+)")                      // rssi
+            .number(",G(d+)").optional()         // fuel
+            .any()
             .compile();
 
     private Object decodeStandard(Channel channel, SocketAddress remoteAddress, String sentence) {
@@ -79,6 +90,9 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
 
         position.set(Position.PREFIX_TEMP + 1, parser.next());
         position.set(Position.KEY_STATUS, parser.nextHexLong());
+        if (parser.hasNext()) {
+            position.set(Position.KEY_FUEL, parser.nextInt() * 0.1);
+        }
         position.set(Position.KEY_DRIVER_UNIQUE_ID, parser.next());
 
         int event = parser.nextInt();
@@ -92,7 +106,7 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_SATELLITES, parser.nextInt());
         position.set(Position.KEY_ODOMETER, parser.nextDouble() * 1000);
         position.set(Position.KEY_RSSI, parser.nextInt());
-        position.set(Position.KEY_FUEL_LEVEL, parser.nextInt());
+        position.set(Position.KEY_FUEL, parser.nextInt());
 
         return position;
     }
@@ -143,7 +157,7 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
         position.setCourse(parser.nextInt());
 
         position.set(Position.PREFIX_TEMP + 1, parser.next());
-        position.set(Position.KEY_FUEL_LEVEL, parser.nextInt());
+        position.set(Position.KEY_FUEL, parser.nextInt());
         position.set(Position.KEY_SATELLITES, parser.nextInt());
         position.set(Position.KEY_RSSI, parser.nextInt());
         position.set(Position.KEY_ODOMETER, parser.nextDouble() * 1000);
@@ -159,7 +173,7 @@ public class PortmanProtocolDecoder extends BaseProtocolDecoder {
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
         String sentence = (String) msg;
-        if (sentence.startsWith("$PTMLA")) {
+        if (sentence.startsWith("%%") || sentence.startsWith("$PTMLA")) {
             return decodeStandard(channel, remoteAddress, sentence);
         } else if (sentence.startsWith("$EXT")) {
             return decodeExtended(channel, remoteAddress, sentence);

@@ -75,14 +75,8 @@ public class EnvotechProtocolDecoder extends BaseProtocolDecoder {
 
         int event = parser.nextHexInt();
         switch (event) {
-            case 0x60:
-                position.set(Position.KEY_ALARM, Position.ALARM_LOCK);
-                break;
-            case 0x61:
-                position.set(Position.KEY_ALARM, Position.ALARM_UNLOCK);
-                break;
-            default:
-                break;
+            case 0x60 -> position.addAlarm(Position.ALARM_LOCK);
+            case 0x61 -> position.addAlarm(Position.ALARM_UNLOCK);
         }
         position.set(Position.KEY_EVENT, event);
 
@@ -99,7 +93,7 @@ public class EnvotechProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_BATTERY, parser.nextInt() * 0.01);
         position.set(Position.KEY_INPUT, parser.nextHexInt());
         position.set(Position.PREFIX_OUT, parser.nextHexInt());
-        position.set(Position.KEY_FUEL_LEVEL, parser.nextHexInt());
+        position.set(Position.KEY_FUEL, parser.nextHexInt());
         position.set("weight", parser.nextHexInt());
         position.set(Position.KEY_STATUS, parser.nextHexLong());
 

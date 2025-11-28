@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
  * Copyright 2016 Gabor Somogyi (gabor.g.somogyi@gmail.com)
  * Copyright 2017 Andrey Kunitsyn (andrey@traccar.org)
  *
@@ -17,12 +17,17 @@
  */
 package org.traccar.api.resource;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.ws.rs.core.Context;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.traccar.BaseProtocol;
 import org.traccar.ServerManager;
 import org.traccar.api.ExtendedObjectResource;
+import org.traccar.command.CommandSender;
+import org.traccar.command.CommandSenderManager;
 import org.traccar.database.CommandsManager;
+import org.traccar.helper.LogAction;
 import org.traccar.helper.model.DeviceUtil;
 import org.traccar.model.Command;
 import org.traccar.model.Device;
@@ -37,22 +42,21 @@ import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
-import javax.inject.Inject;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Path("commands")
 @Produces(MediaType.APPLICATION_JSON)
@@ -67,8 +71,17 @@ public class CommandResource extends ExtendedObjectResource<Command> {
     @Inject
     private ServerManager serverManager;
 
+    @Inject
+    private LogAction actionLogger;
+
+    @Inject
+    private CommandSenderManager commandSenderManager;
+
+    @Context
+    private HttpServletRequest request;
+
     public CommandResource() {
-        super(Command.class);
+        super(Command.class, "description");
     }
 
     private BaseProtocol getDeviceProtocol(long deviceId) throws StorageException {
@@ -102,7 +115,7 @@ public class CommandResource extends ExtendedObjectResource<Command> {
             } else {
                 return type.equals(Command.TYPE_CUSTOM);
             }
-        }).collect(Collectors.toList());
+        }).toList();
     }
 
     @POST
@@ -117,20 +130,32 @@ public class CommandResource extends ExtendedObjectResource<Command> {
         } else {
             permissionsService.checkRestriction(getUserId(), UserRestrictions::getLimitCommands);
         }
-        boolean result = true;
+
         if (groupId > 0) {
             permissionsService.checkPermission(Group.class, getUserId(), groupId);
             var devices = DeviceUtil.getAccessibleDevices(storage, getUserId(), List.of(), List.of(groupId));
+            List<QueuedCommand> queuedCommands = new ArrayList<>();
             for (Device device : devices) {
                 Command command = QueuedCommand.fromCommand(entity).toCommand();
                 command.setDeviceId(device.getId());
-                result = result && commandsManager.sendCommand(command);
+                QueuedCommand queuedCommand = commandsManager.sendCommand(command);
+                if (queuedCommand != null) {
+                    queuedCommands.add(queuedCommand);
+                }
+            }
+            if (!queuedCommands.isEmpty()) {
+                return Response.accepted(queuedCommands).build();
             }
         } else {
             permissionsService.checkPermission(Device.class, getUserId(), entity.getDeviceId());
-            result = commandsManager.sendCommand(entity);
+            QueuedCommand queuedCommand = commandsManager.sendCommand(entity);
+            if (queuedCommand != null) {
+                return Response.accepted(queuedCommand).build();
+            }
         }
-        return result ? Response.ok(entity).build() : Response.accepted(entity).build();
+
+        actionLogger.command(request, getUserId(), groupId, entity.getDeviceId(), entity.getType());
+        return Response.ok(entity).build();
     }
 
     @GET
@@ -140,12 +165,20 @@ public class CommandResource extends ExtendedObjectResource<Command> {
             @QueryParam("textChannel") boolean textChannel) throws StorageException {
         if (deviceId != 0) {
             permissionsService.checkPermission(Device.class, getUserId(), deviceId);
+
+            Device device = storage.getObject(Device.class, new Request(
+                    new Columns.All(), new Condition.Equals("id", deviceId)));
+            CommandSender sender = commandSenderManager.getSender(device);
+            if (sender != null) {
+                return sender.getSupportedCommands().stream().map(Typed::new).toList();
+            }
+
             BaseProtocol protocol = getDeviceProtocol(deviceId);
             if (protocol != null) {
                 if (textChannel) {
-                    return protocol.getSupportedTextCommands().stream().map(Typed::new).collect(Collectors.toList());
+                    return protocol.getSupportedTextCommands().stream().map(Typed::new).toList();
                 } else {
-                    return protocol.getSupportedDataCommands().stream().map(Typed::new).collect(Collectors.toList());
+                    return protocol.getSupportedDataCommands().stream().map(Typed::new).toList();
                 }
             } else {
                 return Collections.singletonList(new Typed(Command.TYPE_CUSTOM));

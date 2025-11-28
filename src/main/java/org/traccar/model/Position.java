@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2012 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package org.traccar.model;
 
 import java.util.Date;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.traccar.storage.QueryIgnore;
@@ -42,7 +41,7 @@ public class Position extends Message {
     public static final String KEY_ODOMETER = "odometer"; // meters
     public static final String KEY_ODOMETER_SERVICE = "serviceOdometer"; // meters
     public static final String KEY_ODOMETER_TRIP = "tripOdometer"; // meters
-    public static final String KEY_HOURS = "hours";
+    public static final String KEY_HOURS = "hours"; // milliseconds
     public static final String KEY_STEPS = "steps";
     public static final String KEY_HEART_RATE = "heartRate";
     public static final String KEY_INPUT = "input";
@@ -56,9 +55,10 @@ public class Position extends Message {
     public static final String KEY_POWER = "power"; // volts
     public static final String KEY_BATTERY = "battery"; // volts
     public static final String KEY_BATTERY_LEVEL = "batteryLevel"; // percentage
-    public static final String KEY_FUEL_LEVEL = "fuel"; // liters
+    public static final String KEY_FUEL = "fuel"; // liters
     public static final String KEY_FUEL_USED = "fuelUsed"; // liters
     public static final String KEY_FUEL_CONSUMPTION = "fuelConsumption"; // liters/hour
+    public static final String KEY_FUEL_LEVEL = "fuelLevel"; // percentage
 
     public static final String KEY_VERSION_FW = "versionFw";
     public static final String KEY_VERSION_HW = "versionHw";
@@ -79,9 +79,11 @@ public class Position extends Message {
     public static final String KEY_ARMED = "armed";
     public static final String KEY_GEOFENCE = "geofence";
     public static final String KEY_ACCELERATION = "acceleration";
+    public static final String KEY_HUMIDITY = "humidity";
     public static final String KEY_DEVICE_TEMP = "deviceTemp"; // celsius
     public static final String KEY_COOLANT_TEMP = "coolantTemp"; // celsius
     public static final String KEY_ENGINE_LOAD = "engineLoad";
+    public static final String KEY_ENGINE_TEMP = "engineTemp";
     public static final String KEY_OPERATOR = "operator";
     public static final String KEY_COMMAND = "command";
     public static final String KEY_BLOCKED = "blocked";
@@ -95,7 +97,7 @@ public class Position extends Message {
     public static final String KEY_DRIVING_TIME = "drivingTime";
 
     public static final String KEY_DTCS = "dtcs";
-    public static final String KEY_OBD_SPEED = "obdSpeed"; // knots
+    public static final String KEY_OBD_SPEED = "obdSpeed"; // km/h
     public static final String KEY_OBD_ODOMETER = "obdOdometer"; // meters
 
     public static final String KEY_RESULT = "result";
@@ -205,11 +207,13 @@ public class Position extends Message {
 
     private boolean outdated;
 
+    @JsonIgnore
     @QueryIgnore
     public boolean getOutdated() {
         return outdated;
     }
 
+    @JsonIgnore
     @QueryIgnore
     public void setOutdated(boolean outdated) {
         this.outdated = outdated;
@@ -319,9 +323,19 @@ public class Position extends Message {
 
     public void setGeofenceIds(List<? extends Number> geofenceIds) {
         if (geofenceIds != null) {
-            this.geofenceIds = geofenceIds.stream().map(Number::longValue).collect(Collectors.toList());
+            this.geofenceIds = geofenceIds.stream().map(Number::longValue).toList();
         } else {
             this.geofenceIds = null;
+        }
+    }
+
+    public void addAlarm(String alarm) {
+        if (alarm != null) {
+            if (hasAttribute(KEY_ALARM)) {
+                set(KEY_ALARM, getAttributes().get(KEY_ALARM) + "," + alarm);
+            } else {
+                set(KEY_ALARM, alarm);
+            }
         }
     }
 

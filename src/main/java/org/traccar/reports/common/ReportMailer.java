@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2023 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,14 @@ import org.slf4j.LoggerFactory;
 import org.traccar.api.security.PermissionsService;
 import org.traccar.mail.MailManager;
 import org.traccar.model.User;
+import org.traccar.notification.TextTemplateFormatter;
 import org.traccar.storage.StorageException;
 
-import javax.activation.DataHandler;
-import javax.inject.Inject;
-import javax.mail.MessagingException;
-import javax.mail.internet.MimeBodyPart;
-import javax.mail.util.ByteArrayDataSource;
+import jakarta.activation.DataHandler;
+import jakarta.inject.Inject;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.util.ByteArrayDataSource;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
@@ -36,11 +37,15 @@ public class ReportMailer {
 
     private final PermissionsService permissionsService;
     private final MailManager mailManager;
+    private final TextTemplateFormatter textTemplateFormatter;
 
     @Inject
-    public ReportMailer(PermissionsService permissionsService, MailManager mailManager) {
+    public ReportMailer(
+            PermissionsService permissionsService, MailManager mailManager,
+            TextTemplateFormatter textTemplateFormatter) {
         this.permissionsService = permissionsService;
         this.mailManager = mailManager;
+        this.textTemplateFormatter = textTemplateFormatter;
     }
 
     public void sendAsync(long userId, ReportExecutor executor) {
@@ -57,6 +62,19 @@ public class ReportMailer {
                 User user = permissionsService.getUser(userId);
                 mailManager.sendMessage(user, false, "Report", "The report is in the attachment.", attachment);
             } catch (StorageException | IOException | MessagingException e) {
+                LOGGER.warn("Email report failed", e);
+            }
+        }).start();
+    }
+
+    public void sendAsync(User user, String url) {
+        new Thread(() -> {
+            try {
+                var velocityContext = textTemplateFormatter.prepareContext(permissionsService.getServer(), user);
+                velocityContext.put("reportUrl", url);
+                var fullMessage = textTemplateFormatter.formatMessage(velocityContext, "scheduledReport", false);
+                mailManager.sendMessage(user, false, fullMessage.subject(), fullMessage.body());
+            } catch (StorageException | MessagingException e) {
                 LOGGER.warn("Email report failed", e);
             }
         }).start();

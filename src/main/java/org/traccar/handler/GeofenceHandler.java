@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2023 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,38 +15,30 @@
  */
 package org.traccar.handler;
 
-import io.netty.channel.ChannelHandler;
-import org.traccar.BaseDataHandler;
-import org.traccar.config.Config;
+import jakarta.inject.Inject;
 import org.traccar.helper.model.GeofenceUtil;
 import org.traccar.model.Position;
 import org.traccar.session.cache.CacheManager;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
 import java.util.List;
 
-@Singleton
-@ChannelHandler.Sharable
-public class GeofenceHandler extends BaseDataHandler {
+public class GeofenceHandler extends BasePositionHandler {
 
-    private final Config config;
     private final CacheManager cacheManager;
 
     @Inject
-    public GeofenceHandler(Config config, CacheManager cacheManager) {
-        this.config = config;
+    public GeofenceHandler(CacheManager cacheManager) {
         this.cacheManager = cacheManager;
     }
 
     @Override
-    protected Position handlePosition(Position position) {
+    public void onPosition(Position position, Callback callback) {
 
-        List<Long> geofenceIds = GeofenceUtil.getCurrentGeofences(config, cacheManager, position);
+        List<Long> geofenceIds = GeofenceUtil.getCurrentGeofences(cacheManager, position);
         if (!geofenceIds.isEmpty()) {
             position.setGeofenceIds(geofenceIds);
         }
-        return position;
+        callback.processed(false);
     }
 
 }

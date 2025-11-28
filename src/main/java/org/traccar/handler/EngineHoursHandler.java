@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2018 - 2024 Anton Tananaev (anton@traccar.org)
  * Copyright 2018 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,17 +16,11 @@
  */
 package org.traccar.handler;
 
-import io.netty.channel.ChannelHandler;
-import org.traccar.BaseDataHandler;
+import jakarta.inject.Inject;
 import org.traccar.model.Position;
 import org.traccar.session.cache.CacheManager;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-@Singleton
-@ChannelHandler.Sharable
-public class EngineHoursHandler extends BaseDataHandler {
+public class EngineHoursHandler extends BasePositionHandler {
 
     private final CacheManager cacheManager;
 
@@ -36,20 +30,20 @@ public class EngineHoursHandler extends BaseDataHandler {
     }
 
     @Override
-    protected Position handlePosition(Position position) {
+    public void onPosition(Position position, Callback callback) {
         if (!position.hasAttribute(Position.KEY_HOURS)) {
             Position last = cacheManager.getPosition(position.getDeviceId());
             if (last != null) {
                 long hours = last.getLong(Position.KEY_HOURS);
                 if (last.getBoolean(Position.KEY_IGNITION) && position.getBoolean(Position.KEY_IGNITION)) {
-                    hours += position.getFixTime().getTime() - last.getFixTime().getTime();
+                    hours += position.getDeviceTime().getTime() - last.getDeviceTime().getTime();
                 }
                 if (hours != 0) {
                     position.set(Position.KEY_HOURS, hours);
                 }
             }
         }
-        return position;
+        callback.processed(false);
     }
 
 }

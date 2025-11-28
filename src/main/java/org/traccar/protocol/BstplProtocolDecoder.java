@@ -46,6 +46,7 @@ public class BstplProtocolDecoder extends BaseProtocolDecoder {
             .number("(d+),")                     // odometer
             .number("(d+),")                     // course
             .number("(d+),")                     // satellites
+            .groupBegin()
             .number("([01]),")                   // box open
             .number("(d+),")                     // rssi
             .number("([01]),")                   // charge
@@ -58,23 +59,37 @@ public class BstplProtocolDecoder extends BaseProtocolDecoder {
             .expression("([^,]+),")              // firmware
             .number("([^,]+),")                  // iccid
             .number("(d+.d+)")                   // power
+            .or()
+            .number("(d+),")                     // rssi
+            .number("([01]),")                   // box open
+            .number("(d+.d+),")                  // battery
+            .number("([01]),")                   // charge
+            .number("([01]),")                   // ignition
+            .number("(d+.d+),")                  // power
+            .number("(d+),")                     // altitude
+            .number("[01],")                     // reserved
+            .expression("([^,]+),")              // firmware
+            .number("([^,]+),")                  // iccid
+            .text("{")
+            .number("(d+),")                     // rpm
+            .number("(d+),")                     // can odometer
+            .number("(d+),")                     // fuel
+            .number("(d+),")                     // gear
+            .number("(d+.d+),")                  // engine temperature
+            .number("(d+.d+)")                   // coolant temperature
+            .text("}")
+            .groupEnd()
             .compile();
 
     private String decodeAlarm(int value) {
-        switch (value) {
-            case 4:
-                return Position.ALARM_LOW_BATTERY;
-            case 5:
-                return Position.ALARM_ACCELERATION;
-            case 6:
-                return Position.ALARM_BRAKING;
-            case 7:
-                return Position.ALARM_OVERSPEED;
-            case 9:
-                return Position.ALARM_SOS;
-            default:
-                return null;
-        }
+        return switch (value) {
+            case 4 -> Position.ALARM_LOW_BATTERY;
+            case 5 -> Position.ALARM_ACCELERATION;
+            case 6 -> Position.ALARM_BRAKING;
+            case 7 -> Position.ALARM_OVERSPEED;
+            case 9 -> Position.ALARM_SOS;
+            default -> null;
+        };
     }
     @Override
     protected Object decode(
@@ -95,7 +110,7 @@ public class BstplProtocolDecoder extends BaseProtocolDecoder {
         Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
 
-        position.set(Position.KEY_ALARM, decodeAlarm(type));
+        position.addAlarm(decodeAlarm(type));
 
         position.setValid(parser.next().equals("A"));
         position.setTime(parser.nextDateTime(Parser.DateTimeFormat.DMY_HMS));
@@ -109,27 +124,51 @@ public class BstplProtocolDecoder extends BaseProtocolDecoder {
 
         position.set(Position.KEY_SATELLITES, parser.nextInt());
 
-        boolean boxOpen = parser.nextInt() > 0;
-        if (type == 8 && boxOpen) {
-            position.set(Position.KEY_ALARM, Position.ALARM_TAMPERING);
+        if (parser.hasNext(11)) {
+
+            boolean boxOpen = parser.nextInt() > 0;
+            if (type == 8 && boxOpen) {
+                position.addAlarm(Position.ALARM_TAMPERING);
+            }
+            position.set("boxOpen", boxOpen);
+
+            position.set(Position.KEY_RSSI, parser.nextInt());
+
+            boolean charge = parser.nextInt() > 0;
+            if (type == 3) {
+                position.addAlarm(charge ? Position.ALARM_POWER_RESTORED : Position.ALARM_POWER_CUT);
+            }
+            position.set(Position.KEY_CHARGE, charge);
+
+            position.set(Position.KEY_IGNITION, parser.nextInt() > 0);
+            position.set("engine", parser.nextInt() > 0);
+            position.set(Position.KEY_BLOCKED, parser.nextInt() > 0);
+            position.set(Position.PREFIX_ADC + 1, parser.nextDouble());
+            position.set(Position.KEY_BATTERY, parser.nextDouble());
+            position.set(Position.KEY_VERSION_FW, parser.next());
+            position.set(Position.KEY_ICCID, parser.next());
+            position.set(Position.KEY_POWER, parser.nextDouble());
+
+        } else {
+
+            position.set(Position.KEY_RSSI, parser.nextInt());
+            position.set("boxOpen", parser.nextInt() > 0);
+            position.set(Position.KEY_BATTERY, parser.nextDouble());
+            position.set(Position.KEY_CHARGE, parser.nextInt() > 0);
+            position.set(Position.KEY_IGNITION, parser.nextInt() > 0);
+            position.set(Position.KEY_POWER, parser.nextDouble());
+            position.setAltitude(parser.nextInt());
+            position.set(Position.KEY_VERSION_FW, parser.next());
+            position.set(Position.KEY_ICCID, parser.next());
+
+            position.set(Position.KEY_RPM, parser.nextInt());
+            position.set(Position.KEY_OBD_ODOMETER, parser.nextInt());
+            position.set(Position.KEY_FUEL, parser.nextInt());
+            position.set("gear", parser.nextInt());
+            position.set(Position.KEY_ENGINE_TEMP, parser.nextDouble());
+            position.set(Position.KEY_COOLANT_TEMP, parser.nextDouble());
+
         }
-        position.set("boxOpen", boxOpen);
-
-        position.set(Position.KEY_RSSI, parser.nextInt());
-
-        boolean charge = parser.nextInt() > 0;
-        if (type == 3) {
-            position.set(Position.KEY_ALARM, charge ? Position.ALARM_POWER_RESTORED : Position.ALARM_POWER_CUT);
-        }
-        position.set(Position.KEY_CHARGE, charge);
-
-        position.set(Position.KEY_IGNITION, parser.nextInt() > 0);
-        position.set("engine", parser.nextInt() > 0);
-        position.set(Position.KEY_BLOCKED, parser.nextInt() > 0);
-        position.set(Position.PREFIX_ADC + 1, parser.nextDouble());
-        position.set(Position.KEY_BATTERY, parser.nextDouble());
-        position.set(Position.KEY_ICCID, parser.next());
-        position.set(Position.KEY_POWER, parser.nextDouble());
 
         return position;
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2018 - 2024 Anton Tananaev (anton@traccar.org)
  * Copyright 2018 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,17 +23,18 @@ import org.traccar.model.User;
 import org.traccar.notification.NotificationFormatter;
 import org.traccar.session.ConnectionManager;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
 @Singleton
-public final class NotificatorWeb implements Notificator {
+public final class NotificatorWeb extends Notificator {
 
     private final ConnectionManager connectionManager;
     private final NotificationFormatter notificationFormatter;
 
     @Inject
     public NotificatorWeb(ConnectionManager connectionManager, NotificationFormatter notificationFormatter) {
+        super(null);
         this.connectionManager = connectionManager;
         this.notificationFormatter = notificationFormatter;
     }
@@ -51,8 +52,8 @@ public final class NotificatorWeb implements Notificator {
         copy.setMaintenanceId(event.getMaintenanceId());
         copy.getAttributes().putAll(event.getAttributes());
 
-        var message = notificationFormatter.formatMessage(user, event, position, "short");
-        copy.set("message", message.getBody());
+        var message = notificationFormatter.formatMessage(notification, user, event, position);
+        copy.set("message", message.digest());
 
         connectionManager.updateEvent(true, user.getId(), copy);
     }

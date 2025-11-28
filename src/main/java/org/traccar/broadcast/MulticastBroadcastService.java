@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2022 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
-import org.traccar.model.BaseModel;
-import org.traccar.model.Device;
-import org.traccar.model.Event;
-import org.traccar.model.Permission;
-import org.traccar.model.Position;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -34,13 +29,9 @@ import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
 import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
-public class MulticastBroadcastService implements BroadcastService {
+public class MulticastBroadcastService extends BaseBroadcastService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MulticastBroadcastService.class);
 
@@ -52,12 +43,12 @@ public class MulticastBroadcastService implements BroadcastService {
 
     private DatagramSocket publisherSocket;
 
-    private final ExecutorService service = Executors.newSingleThreadExecutor();
+    private final ExecutorService executorService;
     private final byte[] receiverBuffer = new byte[4096];
 
-    private final Set<BroadcastInterface> listeners = new HashSet<>();
-
-    public MulticastBroadcastService(Config config, ObjectMapper objectMapper) throws IOException {
+    public MulticastBroadcastService(
+            Config config, ExecutorService executorService, ObjectMapper objectMapper) throws IOException {
+        this.executorService = executorService;
         this.objectMapper = objectMapper;
         port = config.getInteger(Keys.BROADCAST_PORT);
         String interfaceName = config.getString(Keys.BROADCAST_INTERFACE);
@@ -76,57 +67,7 @@ public class MulticastBroadcastService implements BroadcastService {
     }
 
     @Override
-    public void registerListener(BroadcastInterface listener) {
-        listeners.add(listener);
-    }
-
-    @Override
-    public void updateDevice(boolean local, Device device) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setDevice(device);
-        sendMessage(message);
-    }
-
-    @Override
-    public void updatePosition(boolean local, Position position) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setPosition(position);
-        sendMessage(message);
-    }
-
-    @Override
-    public void updateEvent(boolean local, long userId, Event event) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setUserId(userId);
-        message.setEvent(event);
-        sendMessage(message);
-    }
-
-    @Override
-    public void updateCommand(boolean local, long deviceId) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setCommandDeviceId(deviceId);
-        sendMessage(message);
-    }
-
-    @Override
-    public void invalidateObject(boolean local, Class<? extends BaseModel> clazz, long id) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setChanges(Map.of(Permission.getKey(clazz), id));
-        sendMessage(message);
-    }
-
-    @Override
-    public void invalidatePermission(
-            boolean local,
-            Class<? extends BaseModel> clazz1, long id1,
-            Class<? extends BaseModel> clazz2, long id2) {
-        BroadcastMessage message = new BroadcastMessage();
-        message.setChanges(Map.of(Permission.getKey(clazz1), id1, Permission.getKey(clazz2), id2));
-        sendMessage(message);
-    }
-
-    private void sendMessage(BroadcastMessage message) {
+    protected void sendMessage(BroadcastMessage message) {
         try {
             byte[] buffer = objectMapper.writeValueAsString(message).getBytes(StandardCharsets.UTF_8);
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length, group);
@@ -136,42 +77,13 @@ public class MulticastBroadcastService implements BroadcastService {
         }
     }
 
-    private void handleMessage(BroadcastMessage message) {
-        if (message.getDevice() != null) {
-            listeners.forEach(listener -> listener.updateDevice(false, message.getDevice()));
-        } else if (message.getPosition() != null) {
-            listeners.forEach(listener -> listener.updatePosition(false, message.getPosition()));
-        } else if (message.getUserId() != null && message.getEvent() != null) {
-            listeners.forEach(listener -> listener.updateEvent(false, message.getUserId(), message.getEvent()));
-        } else if (message.getCommandDeviceId() != null) {
-            listeners.forEach(listener -> listener.updateCommand(false, message.getCommandDeviceId()));
-        } else if (message.getChanges() != null) {
-            var iterator = message.getChanges().entrySet().iterator();
-            if (iterator.hasNext()) {
-                var first = iterator.next();
-                if (iterator.hasNext()) {
-                    var second = iterator.next();
-                    listeners.forEach(listener -> listener.invalidatePermission(
-                            false,
-                            Permission.getKeyClass(first.getKey()), first.getValue(),
-                            Permission.getKeyClass(second.getKey()), second.getValue()));
-                } else {
-                    listeners.forEach(listener -> listener.invalidateObject(
-                            false,
-                            Permission.getKeyClass(first.getKey()), first.getValue()));
-                }
-            }
-        }
-    }
-
     @Override
     public void start() throws IOException {
-        service.submit(receiver);
+        executorService.submit(receiver);
     }
 
     @Override
     public void stop() {
-        service.shutdown();
     }
 
     private final Runnable receiver = new Runnable() {
@@ -181,7 +93,7 @@ public class MulticastBroadcastService implements BroadcastService {
                 socket.setNetworkInterface(networkInterface);
                 socket.joinGroup(group, networkInterface);
                 publisherSocket = socket;
-                while (!service.isShutdown()) {
+                while (!executorService.isShutdown()) {
                     DatagramPacket packet = new DatagramPacket(receiverBuffer, receiverBuffer.length);
                     socket.receive(packet);
                     if (networkInterface.inetAddresses().noneMatch(a -> a.equals(packet.getAddress()))) {
@@ -191,7 +103,7 @@ public class MulticastBroadcastService implements BroadcastService {
                 }
                 publisherSocket = null;
                 socket.leaveGroup(group, networkInterface);
-            } catch (IOException e) {
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }

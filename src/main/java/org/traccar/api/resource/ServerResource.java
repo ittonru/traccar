@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,32 +15,46 @@
  */
 package org.traccar.api.resource;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.ws.rs.core.Context;
 import org.traccar.api.BaseResource;
+import org.traccar.model.ObjectOperation;
+import org.traccar.config.Config;
+import org.traccar.config.Keys;
 import org.traccar.database.OpenIdProvider;
-import org.traccar.helper.model.UserUtil;
-import org.traccar.mail.MailManager;
 import org.traccar.geocoder.Geocoder;
 import org.traccar.helper.Log;
 import org.traccar.helper.LogAction;
+import org.traccar.helper.model.UserUtil;
+import org.traccar.mail.MailManager;
 import org.traccar.model.Server;
 import org.traccar.model.User;
 import org.traccar.session.cache.CacheManager;
+import org.traccar.sms.SmsManager;
 import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
-import javax.annotation.Nullable;
-import javax.annotation.security.PermitAll;
-import javax.inject.Inject;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
+import jakarta.annotation.Nullable;
+import jakarta.annotation.security.PermitAll;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.TimeZone;
@@ -51,10 +65,17 @@ import java.util.TimeZone;
 public class ServerResource extends BaseResource {
 
     @Inject
+    private Config config;
+
+    @Inject
     private CacheManager cacheManager;
 
     @Inject
     private MailManager mailManager;
+
+    @Inject
+    @Nullable
+    private SmsManager smsManager;
 
     @Inject
     @Nullable
@@ -64,11 +85,18 @@ public class ServerResource extends BaseResource {
     @Nullable
     private Geocoder geocoder;
 
+    @Inject
+    private LogAction actionLogger;
+
+    @Context
+    private HttpServletRequest request;
+
     @PermitAll
     @GET
     public Server get() throws StorageException {
         Server server = storage.getObject(Server.class, new Request(new Columns.All()));
         server.setEmailEnabled(mailManager.getEmailEnabled());
+        server.setTextEnabled(smsManager != null);
         server.setGeocoderEnabled(geocoder != null);
         server.setOpenIdEnabled(openIdProvider != null);
         server.setOpenIdForce(openIdProvider != null && openIdProvider.getForce());
@@ -80,21 +108,18 @@ public class ServerResource extends BaseResource {
         } else {
             server.setNewServer(UserUtil.isEmpty(storage));
         }
-        if (user != null && user.getAdministrator()) {
-            server.setStorageSpace(Log.getStorageSpace());
-        }
         return server;
     }
 
     @PUT
-    public Response update(Server entity) throws StorageException {
+    public Response update(Server server) throws Exception {
         permissionsService.checkAdmin(getUserId());
-        storage.updateObject(entity, new Request(
+        storage.updateObject(server, new Request(
                 new Columns.Exclude("id"),
-                new Condition.Equals("id", entity.getId())));
-        cacheManager.updateOrInvalidate(true, entity);
-        LogAction.edit(getUserId(), entity);
-        return Response.ok(entity).build();
+                new Condition.Equals("id", server.getId())));
+        cacheManager.invalidateObject(true, Server.class, server.getId(), ObjectOperation.UPDATE);
+        actionLogger.edit(request, getUserId(), server);
+        return Response.ok(server).build();
     }
 
     @Path("geocode")
@@ -111,6 +136,52 @@ public class ServerResource extends BaseResource {
     @GET
     public Collection<String> timezones() {
         return Arrays.asList(TimeZone.getAvailableIDs());
+    }
+
+    @Path("file/{path}")
+    @POST
+    @Consumes("*/*")
+    public Response uploadFile(@PathParam("path") String path, File inputFile) throws IOException, StorageException {
+        permissionsService.checkAdmin(getUserId());
+        String root = config.getString(Keys.WEB_OVERRIDE, config.getString(Keys.WEB_PATH));
+
+        var rootPath = Paths.get(root).normalize();
+        var outputPath = rootPath.resolve(path).normalize();
+        if (!outputPath.startsWith(rootPath)) {
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+
+        var directoryPath = outputPath.getParent();
+        if (directoryPath != null) {
+            Files.createDirectories(directoryPath);
+        }
+
+        try (var input = new FileInputStream(inputFile); var output = new FileOutputStream(outputPath.toFile())) {
+            input.transferTo(output);
+        }
+        return Response.ok().build();
+    }
+
+    @Path("gc")
+    @GET
+    public Response gc() throws StorageException {
+        permissionsService.checkAdmin(getUserId());
+        System.gc();
+        return Response.ok().build();
+    }
+
+    @Path("cache")
+    @GET
+    public String cache() throws StorageException {
+        permissionsService.checkAdmin(getUserId());
+        return cacheManager.toString();
+    }
+
+    @Path("reboot")
+    @POST
+    public void reboot() throws StorageException {
+        permissionsService.checkAdmin(getUserId());
+        System.exit(130);
     }
 
 }

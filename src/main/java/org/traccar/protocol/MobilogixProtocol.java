@@ -22,19 +22,27 @@ import org.traccar.CharacterDelimiterFrameDecoder;
 import org.traccar.PipelineBuilder;
 import org.traccar.TrackerServer;
 import org.traccar.config.Config;
+import org.traccar.model.Command;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 public class MobilogixProtocol extends BaseProtocol {
 
     @Inject
     public MobilogixProtocol(Config config) {
+        setSupportedDataCommands(
+                Command.TYPE_CUSTOM,
+                Command.TYPE_ENGINE_RESUME,
+                Command.TYPE_ENGINE_STOP,
+                Command.TYPE_POSITION_SINGLE,
+                Command.TYPE_REBOOT_DEVICE);
         addServer(new TrackerServer(config, getName(), false) {
             @Override
             protected void addProtocolHandlers(PipelineBuilder pipeline, Config config) {
                 pipeline.addLast(new CharacterDelimiterFrameDecoder(1024, ']'));
                 pipeline.addLast(new StringEncoder());
                 pipeline.addLast(new StringDecoder());
+                pipeline.addLast(new MobilogixProtocolEncoder(MobilogixProtocol.this));
                 pipeline.addLast(new MobilogixProtocolDecoder(MobilogixProtocol.this));
             }
         });

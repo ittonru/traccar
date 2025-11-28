@@ -30,6 +30,7 @@ import org.traccar.model.Position;
 
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
@@ -112,7 +113,7 @@ public class BceProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.KEY_FUEL_USED, buf.readUnsignedIntLE() * 0.5);
         }
         if (BitUtil.check(mask, 3)) {
-            position.set(Position.KEY_FUEL_LEVEL, buf.readUnsignedByte());
+            position.set(Position.KEY_FUEL, buf.readUnsignedByte());
         }
         if (BitUtil.check(mask, 4)) {
             position.set(Position.KEY_RPM, buf.readUnsignedShortLE() * 0.125);
@@ -287,6 +288,10 @@ public class BceProtocolDecoder extends BaseProtocolDecoder {
 
                     time = time >> 4 << 1;
                     time += 0x47798280; // 01/01/2008
+                    long threshold = System.currentTimeMillis() / 1000 - Duration.ofDays(3650).toSeconds();
+                    while (time < threshold) {
+                        time += 0x0FFFFFFF * 2;
+                    }
                     position.setTime(new Date(time * 1000));
 
                     // Read masks

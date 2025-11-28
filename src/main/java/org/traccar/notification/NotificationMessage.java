@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2025 Anton Tananaev (anton@traccar.org)
  * Copyright 2016 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,21 +16,10 @@
  */
 package org.traccar.notification;
 
-public class NotificationMessage {
-
-    private String subject;
-    private String body;
-
-    public NotificationMessage(String subject, String body) {
-        this.subject = subject;
-        this.body = body;
-    }
-
-    public String getSubject() {
-        return subject;
-    }
-
-    public String getBody() {
-        return body;
+public record NotificationMessage(String subject, String digest, String body, boolean priority) {
+    public NotificationMessage {
+        if (digest == null) {
+            digest = body;
+        }
     }
 }

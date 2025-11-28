@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,9 +50,9 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
             .number("(dd)(dd)(dd),")             // date (ddmmyy)
             .number("(dd)(dd)(dd),")             // time (hhmmss)
             .expression("([AV]),")               // validity
-            .number(" *(-?d+.d+),")              // latitude
-            .expression("([NS]),")
-            .number(" *(-?d+.d+),")              // longitude
+            .number(" *(-?d+.?d*),")             // latitude
+            .expression("([NS])?,")
+            .number(" *(-?d+.?d*),")             // longitude
             .expression("([EW])?,")
             .number("(d+.?d*),")                 // speed
             .number("(d+.?d*),")                 // course
@@ -132,7 +132,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_STEPS, parser.nextInt(0));
 
         int status = parser.nextHexInt(0);
-        position.set(Position.KEY_ALARM, decodeAlarm(status));
+        position.addAlarm(decodeAlarm(status));
         if (BitUtil.check(status, 4)) {
             position.set(Position.KEY_MOTION, true);
         }
@@ -269,7 +269,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
 
             if (type.startsWith("AL")) {
                 if (position != null && !position.hasAttribute(Position.KEY_ALARM)) {
-                    position.set(Position.KEY_ALARM, Position.ALARM_GENERAL);
+                    position.addAlarm(Position.ALARM_GENERAL);
                 }
                 sendResponse(channel, id, index, "AL");
             }
@@ -285,7 +285,8 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
                 || type.equalsIgnoreCase("BLOOD")
                 || type.equalsIgnoreCase("BPHRT")
                 || type.equalsIgnoreCase("TEMP")
-                || type.equalsIgnoreCase("btemp2")) {
+                || type.equalsIgnoreCase("btemp2")
+                || type.equalsIgnoreCase("oxygen")) {
 
             if (buf.isReadable()) {
 
@@ -303,6 +304,8 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
                     if (Integer.parseInt(values[valueIndex++]) > 0) {
                         position.set(Position.PREFIX_TEMP + 1, Double.parseDouble(values[valueIndex]));
                     }
+                } else if (type.equalsIgnoreCase("oxygen")) {
+                    position.set("bloodOxygen", Integer.parseInt(values[++valueIndex]));
                 } else {
                     if (type.equalsIgnoreCase("BPHRT") || type.equalsIgnoreCase("BLOOD")) {
                         position.set("pressureHigh", values[valueIndex++]);

@@ -24,10 +24,10 @@ import org.traccar.Protocol;
 import org.traccar.helper.UnitsConverter;
 import org.traccar.model.Position;
 
-import javax.json.Json;
-import javax.json.JsonArray;
-import javax.json.JsonObject;
-import javax.json.JsonValue;
+import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonValue;
 import java.io.StringReader;
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -85,24 +85,14 @@ public class OrbcommProtocolDecoder extends BaseProtocolDecoder {
                     JsonObject field = fields.getJsonObject(j);
                     String value = field.getString("Value");
                     switch (field.getString("Name").toLowerCase()) {
-                        case "eventtime":
-                            position.setDeviceTime(new Date(Long.parseLong(value) * 1000));
-                            break;
-                        case "latitude":
-                            position.setLatitude(Integer.parseInt(value) / 60000.0);
-                            break;
-                        case "longitude":
-                            position.setLongitude(Integer.parseInt(value) / 60000.0);
-                            break;
-                        case "speed":
-                            position.setSpeed(UnitsConverter.knotsFromKph(Integer.parseInt(value)));
-                            break;
-                        case "heading":
+                        case "eventtime" -> position.setDeviceTime(new Date(Long.parseLong(value) * 1000));
+                        case "latitude" -> position.setLatitude(Integer.parseInt(value) / 60000.0);
+                        case "longitude" -> position.setLongitude(Integer.parseInt(value) / 60000.0);
+                        case "speed" -> position.setSpeed(UnitsConverter.knotsFromKph(Integer.parseInt(value)));
+                        case "heading" -> {
                             int heading = Integer.parseInt(value);
                             position.setCourse(heading <= 360 ? heading : 0);
-                            break;
-                        default:
-                            break;
+                        }
                     }
                 }
 

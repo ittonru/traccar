@@ -30,8 +30,8 @@ import org.traccar.notificators.NotificatorTelegram;
 import org.traccar.notificators.NotificatorTraccar;
 import org.traccar.notificators.NotificatorWeb;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
@@ -66,7 +66,7 @@ public class NotificatorManager {
 
     public Notificator getNotificator(String type) {
         var clazz = NOTIFICATORS_ALL.get(type);
-        if (clazz != null) {
+        if (clazz != null && types.contains(type)) {
             var notificator = injector.getInstance(clazz);
             if (notificator != null) {
                 return notificator;

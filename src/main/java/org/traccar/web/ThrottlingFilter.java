@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2022 - 2023 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,17 @@
  */
 package org.traccar.web;
 
-import org.eclipse.jetty.servlets.DoSFilter;
+import org.eclipse.jetty.ee10.servlets.DoSFilter;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpSession;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.servlet.FilterConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 
 @Singleton
 public class ThrottlingFilter extends DoSFilter {
@@ -39,6 +39,7 @@ public class ThrottlingFilter extends DoSFilter {
         if (config.hasKey(Keys.WEB_MAX_REQUESTS_PER_SECOND)) {
             setMaxRequestsPerSec(config.getInteger(Keys.WEB_MAX_REQUESTS_PER_SECOND));
         }
+        setMaxRequestMs(config.getInteger(Keys.WEB_MAX_REQUEST_SECONDS) * 1000L);
     }
 
     @Override

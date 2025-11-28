@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2020 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,36 +18,36 @@ package org.traccar.notificators;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.traccar.model.ObjectOperation;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 import org.traccar.model.Event;
 import org.traccar.model.Position;
 import org.traccar.model.User;
 import org.traccar.notification.NotificationFormatter;
+import org.traccar.notification.NotificationMessage;
 import org.traccar.session.cache.CacheManager;
 import org.traccar.storage.Storage;
-import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.json.JsonObject;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.Entity;
-import javax.ws.rs.core.Response;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.json.JsonObject;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
 @Singleton
-public class NotificatorTraccar implements Notificator {
+public class NotificatorTraccar extends Notificator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NotificatorTraccar.class);
 
-    private final NotificationFormatter notificationFormatter;
     private final Client client;
     private final Storage storage;
     private final CacheManager cacheManager;
@@ -65,6 +65,8 @@ public class NotificatorTraccar implements Notificator {
     }
 
     public static class Message {
+        @JsonProperty("type")
+        private String type;
         @JsonProperty("registration_ids")
         private String[] tokens;
         @JsonProperty("notification")
@@ -75,7 +77,7 @@ public class NotificatorTraccar implements Notificator {
     public NotificatorTraccar(
             Config config, NotificationFormatter notificationFormatter, Client client,
             Storage storage, CacheManager cacheManager) {
-        this.notificationFormatter = notificationFormatter;
+        super(notificationFormatter);
         this.client = client;
         this.storage = storage;
         this.cacheManager = cacheManager;
@@ -84,20 +86,19 @@ public class NotificatorTraccar implements Notificator {
     }
 
     @Override
-    public void send(org.traccar.model.Notification notification, User user, Event event, Position position) {
+    public void send(User user, NotificationMessage shortMessage, Event event, Position position) {
         if (user.hasAttribute("notificationTokens")) {
 
-            var shortMessage = notificationFormatter.formatMessage(user, event, position, "short");
-
             NotificationObject item = new NotificationObject();
-            item.title = shortMessage.getSubject();
-            item.body = shortMessage.getBody();
+            item.title = shortMessage.subject();
+            item.body = shortMessage.digest();
             item.sound = "default";
 
             String[] tokenArray = user.getString("notificationTokens").split("[, ]");
             List<String> registrationTokens = new ArrayList<>(Arrays.asList(tokenArray));
 
             Message message = new Message();
+            message.type = "manager";
             message.tokens = user.getString("notificationTokens").split("[, ]");
             message.notification = item;
 
@@ -121,17 +122,17 @@ public class NotificatorTraccar implements Notificator {
                 if (!failedTokens.isEmpty()) {
                     registrationTokens.removeAll(failedTokens);
                     if (registrationTokens.isEmpty()) {
-                        user.getAttributes().remove("notificationTokens");
+                        user.removeAttribute("notificationTokens");
                     } else {
                         user.set("notificationTokens", String.join(",", registrationTokens));
                     }
                     storage.updateObject(user, new Request(
                             new Columns.Include("attributes"),
                             new Condition.Equals("id", user.getId())));
-                    cacheManager.updateOrInvalidate(true, user);
+                    cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
                 }
-            } catch (StorageException e) {
-                LOGGER.warn("Push error", e);
+            } catch (Exception e) {
+                LOGGER.warn("Notification push error", e);
             }
         }
     }

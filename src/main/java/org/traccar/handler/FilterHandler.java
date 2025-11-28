@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2014 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
  */
 package org.traccar.handler;
 
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
+import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
+import org.traccar.database.StatisticsManager;
 import org.traccar.helper.UnitsConverter;
 import org.traccar.helper.model.AttributeUtil;
+import org.traccar.model.Calendar;
 import org.traccar.model.Device;
 import org.traccar.model.Position;
 import org.traccar.session.cache.CacheManager;
@@ -34,20 +34,16 @@ import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Order;
 import org.traccar.storage.query.Request;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
 import java.util.Date;
 
-@Singleton
-@ChannelHandler.Sharable
-public class FilterHandler extends ChannelInboundHandlerAdapter {
+public class FilterHandler extends BasePositionHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(FilterHandler.class);
 
-    private final boolean enabled;
     private final boolean filterInvalid;
     private final boolean filterZero;
     private final boolean filterDuplicate;
+    private final boolean filterOutdated;
     private final long filterFuture;
     private final long filterPast;
     private final boolean filterApproximate;
@@ -56,19 +52,23 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
     private final int filterDistance;
     private final int filterMaxSpeed;
     private final long filterMinPeriod;
+    private final int filterDailyLimit;
+    private final long filterDailyLimitInterval;
     private final boolean filterRelative;
     private final long skipLimit;
     private final boolean skipAttributes;
 
     private final CacheManager cacheManager;
     private final Storage storage;
+    private final StatisticsManager statisticsManager;
 
     @Inject
-    public FilterHandler(Config config, CacheManager cacheManager, Storage storage) {
-        enabled = config.getBoolean(Keys.FILTER_ENABLE);
+    public FilterHandler(
+            Config config, CacheManager cacheManager, Storage storage, StatisticsManager statisticsManager) {
         filterInvalid = config.getBoolean(Keys.FILTER_INVALID);
         filterZero = config.getBoolean(Keys.FILTER_ZERO);
         filterDuplicate = config.getBoolean(Keys.FILTER_DUPLICATE);
+        filterOutdated = config.getBoolean(Keys.FILTER_OUTDATED);
         filterFuture = config.getLong(Keys.FILTER_FUTURE) * 1000;
         filterPast = config.getLong(Keys.FILTER_PAST) * 1000;
         filterAccuracy = config.getInteger(Keys.FILTER_ACCURACY);
@@ -77,11 +77,14 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
         filterDistance = config.getInteger(Keys.FILTER_DISTANCE);
         filterMaxSpeed = config.getInteger(Keys.FILTER_MAX_SPEED);
         filterMinPeriod = config.getInteger(Keys.FILTER_MIN_PERIOD) * 1000L;
+        filterDailyLimit = config.getInteger(Keys.FILTER_DAILY_LIMIT);
+        filterDailyLimitInterval = config.getInteger(Keys.FILTER_DAILY_LIMIT_INTERVAL) * 1000L;
         filterRelative = config.getBoolean(Keys.FILTER_RELATIVE);
         skipLimit = config.getLong(Keys.FILTER_SKIP_LIMIT) * 1000;
         skipAttributes = config.getBoolean(Keys.FILTER_SKIP_ATTRIBUTES_ENABLE);
         this.cacheManager = cacheManager;
         this.storage = storage;
+        this.statisticsManager = statisticsManager;
     }
 
     private Position getPrecedingPosition(long deviceId, Date date) throws StorageException {
@@ -89,7 +92,7 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
                 new Columns.All(),
                 new Condition.And(
                         new Condition.Equals("deviceId", deviceId),
-                        new Condition.Compare("fixTime", "<=", "time", date)),
+                        new Condition.Compare("fixTime", "<=", date)),
                 new Order("fixTime", true, 1)));
     }
 
@@ -113,6 +116,10 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
             return true;
         }
         return false;
+    }
+
+    private boolean filterOutdated(Position position) {
+        return filterOutdated && position.getOutdated();
     }
 
     private boolean filterFuture(Position position) {
@@ -146,7 +153,7 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
         if (filterMaxSpeed != 0 && last != null) {
             double distance = position.getDouble(Position.KEY_DISTANCE);
             double time = position.getFixTime().getTime() - last.getFixTime().getTime();
-            return UnitsConverter.knotsFromMps(distance / (time / 1000)) > filterMaxSpeed;
+            return time > 0 && UnitsConverter.knotsFromMps(distance / (time / 1000)) > filterMaxSpeed;
         }
         return false;
     }
@@ -155,6 +162,16 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
         if (filterMinPeriod != 0 && last != null) {
             long time = position.getFixTime().getTime() - last.getFixTime().getTime();
             return time > 0 && time < filterMinPeriod;
+        }
+        return false;
+    }
+
+    private boolean filterDailyLimit(Position position, Position last) {
+        if (filterDailyLimit != 0
+                && statisticsManager.messageStoredCount(position.getDeviceId()) >= filterDailyLimit) {
+            long lastTime = last != null ? last.getFixTime().getTime() : 0;
+            long interval = position.getFixTime().getTime() - lastTime;
+            return filterDailyLimitInterval <= 0 || interval < filterDailyLimitInterval;
         }
         return false;
     }
@@ -189,6 +206,9 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
         if (filterZero(position)) {
             filterType.append("Zero ");
         }
+        if (filterOutdated(position)) {
+            filterType.append("Outdated ");
+        }
         if (filterFuture(position)) {
             filterType.append("Future ");
         }
@@ -204,14 +224,15 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
 
         // filter out excessive data
         long deviceId = position.getDeviceId();
-        if (filterDuplicate || filterStatic || filterDistance > 0 || filterMaxSpeed > 0 || filterMinPeriod > 0) {
-            Position preceding = null;
+        if (filterDuplicate || filterStatic
+                || filterDistance > 0 || filterMaxSpeed > 0 || filterMinPeriod > 0 || filterDailyLimit > 0) {
+            Position preceding;
             if (filterRelative) {
                 try {
                     Date newFixTime = position.getFixTime();
                     preceding = getPrecedingPosition(deviceId, newFixTime);
                 } catch (StorageException e) {
-                    LOGGER.warn("Error retrieving preceding position; fallbacking to last received position.", e);
+                    LOGGER.warn("Error retrieving preceding position; fall backing to last received position.", e);
                     preceding = cacheManager.getPosition(deviceId);
                 }
             } else {
@@ -232,11 +253,21 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
             if (filterMinPeriod(position, preceding)) {
                 filterType.append("MinPeriod ");
             }
+            if (filterDailyLimit(position, preceding)) {
+                filterType.append("DailyLimit ");
+            }
         }
 
-        if (filterType.length() > 0) {
-            String uniqueId = cacheManager.getObject(Device.class, deviceId).getUniqueId();
-            LOGGER.info("Position filtered by {}filters from device: {}", filterType, uniqueId);
+        Device device = cacheManager.getObject(Device.class, deviceId);
+        if (device.getCalendarId() > 0) {
+            Calendar calendar = cacheManager.getObject(Calendar.class, device.getCalendarId());
+            if (!calendar.checkMoment(position.getFixTime())) {
+                filterType.append("Calendar ");
+            }
+        }
+
+        if (!filterType.isEmpty()) {
+            LOGGER.info("Position filtered by {}filters from device: {}", filterType, device.getUniqueId());
             return true;
         }
 
@@ -244,17 +275,8 @@ public class FilterHandler extends ChannelInboundHandlerAdapter {
     }
 
     @Override
-    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        if (msg instanceof Position) {
-            Position position = (Position) msg;
-            if (enabled && filter(position)) {
-                ctx.writeAndFlush(new AcknowledgementHandler.EventHandled(position));
-            } else {
-                ctx.fireChannelRead(position);
-            }
-        } else {
-            super.channelRead(ctx, msg);
-        }
+    public void onPosition(Position position, Callback callback) {
+        callback.processed(filter(position));
     }
 
 }

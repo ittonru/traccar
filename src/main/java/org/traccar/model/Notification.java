@@ -24,7 +24,29 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.traccar.storage.StorageName;
 
 @StorageName("tc_notifications")
-public class Notification extends ScheduledModel {
+public class Notification extends ExtendedModel implements Schedulable {
+
+    private String description;
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    private long calendarId;
+
+    @Override
+    public long getCalendarId() {
+        return calendarId;
+    }
+
+    @Override
+    public void setCalendarId(long calendarId) {
+        this.calendarId = calendarId;
+    }
 
     private boolean always;
 

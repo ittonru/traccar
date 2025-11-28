@@ -21,8 +21,8 @@ import org.slf4j.LoggerFactory;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -44,7 +44,7 @@ public class MediaManager {
 
     @Inject
     public MediaManager(Config config) {
-        this.path = config.getString(Keys.MEDIA_PATH);
+        path = config.getString(Keys.MEDIA_PATH);
     }
 
     private File createFile(String uniqueId, String name) throws IOException {

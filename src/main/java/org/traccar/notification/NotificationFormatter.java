@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2025 Anton Tananaev (anton@traccar.org)
  * Copyright 2017 - 2018 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,41 +17,49 @@
 package org.traccar.notification;
 
 import org.apache.velocity.VelocityContext;
+import org.traccar.database.LocaleManager;
 import org.traccar.helper.model.UserUtil;
 import org.traccar.model.Device;
+import org.traccar.model.Driver;
 import org.traccar.model.Event;
 import org.traccar.model.Geofence;
 import org.traccar.model.Maintenance;
+import org.traccar.model.Notification;
 import org.traccar.model.Position;
 import org.traccar.model.Server;
 import org.traccar.model.User;
 import org.traccar.session.cache.CacheManager;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
 @Singleton
 public class NotificationFormatter {
 
+    private final LocaleManager localeManager;
     private final CacheManager cacheManager;
     private final TextTemplateFormatter textTemplateFormatter;
 
     @Inject
     public NotificationFormatter(
-            CacheManager cacheManager, TextTemplateFormatter textTemplateFormatter) {
+            LocaleManager localeManager, CacheManager cacheManager, TextTemplateFormatter textTemplateFormatter) {
+        this.localeManager = localeManager;
         this.cacheManager = cacheManager;
         this.textTemplateFormatter = textTemplateFormatter;
     }
 
-    public NotificationMessage formatMessage(User user, Event event, Position position, String templatePath) {
+    public NotificationMessage formatMessage(
+            Notification notification, User user, Event event, Position position) {
 
         Server server = cacheManager.getServer();
         Device device = cacheManager.getObject(Device.class, event.getDeviceId());
 
         VelocityContext velocityContext = textTemplateFormatter.prepareContext(server, user);
 
+        velocityContext.put("notification", notification);
         velocityContext.put("device", device);
         velocityContext.put("event", event);
+        velocityContext.put("translations", localeManager.getBundle(UserUtil.getLanguage(server, user)));
         if (position != null) {
             velocityContext.put("position", position);
             velocityContext.put("speedUnit", UserUtil.getSpeedUnit(server, user));
@@ -66,10 +74,12 @@ public class NotificationFormatter {
         }
         String driverUniqueId = event.getString(Position.KEY_DRIVER_UNIQUE_ID);
         if (driverUniqueId != null) {
-            velocityContext.put("driver", cacheManager.findDriverByUniqueId(device.getId(), driverUniqueId));
+            velocityContext.put("driver", cacheManager.getDeviceObjects(device.getId(), Driver.class).stream()
+                    .filter(driver -> driver.getUniqueId().equals(driverUniqueId)).findFirst().orElse(null));
         }
 
-        return textTemplateFormatter.formatMessage(velocityContext, event.getType(), templatePath);
+        boolean priority = notification != null && notification.getBoolean("priority");
+        return textTemplateFormatter.formatMessage(velocityContext, event.getType(), priority);
     }
 
 }

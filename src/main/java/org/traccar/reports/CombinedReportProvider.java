@@ -28,7 +28,7 @@ import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Order;
 import org.traccar.storage.query.Request;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -60,22 +60,22 @@ public class CombinedReportProvider {
             var positions = PositionUtil.getPositions(storage, device.getId(), from, to);
             item.setRoute(positions.stream()
                     .map(p -> new double[] {p.getLongitude(), p.getLatitude()})
-                    .collect(Collectors.toList()));
+                    .toList());
             var events = storage.getObjects(Event.class, new Request(
                     new Columns.All(),
                     new Condition.And(
                             new Condition.Equals("deviceId", device.getId()),
-                            new Condition.Between("eventTime", "from", from, "to", to)),
+                            new Condition.Between("eventTime", from, to)),
                     new Order("eventTime")));
             item.setEvents(events.stream()
                     .filter(e -> e.getPositionId() > 0 && !EXCLUDE_TYPES.contains(e.getType()))
-                    .collect(Collectors.toList()));
+                    .toList());
             var eventPositions = events.stream()
                     .map(Event::getPositionId)
                     .collect(Collectors.toSet());
             item.setPositions(positions.stream()
                     .filter(p -> eventPositions.contains(p.getId()))
-                    .collect(Collectors.toList()));
+                    .toList());
             result.add(item);
         }
         return result;
