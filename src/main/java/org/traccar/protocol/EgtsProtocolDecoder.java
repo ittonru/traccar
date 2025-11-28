@@ -1,5 +1,6 @@
 /*
- * Copyright 2018 - 2020 Anton Tananaev (anton@traccar.org)
+ * Copyright 2018 - 2025 Anton Tananaev (anton@traccar.org)
+ * Modified for enhanced EGTS support
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +34,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,13 +44,13 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
 
     private static final Logger logger = LoggerFactory.getLogger(EgtsProtocolDecoder.class);
 
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    // Кэш для мультиплексирования: objectId -> DeviceSession
+    private final Map<Long, DeviceSession> objectSessionMap = new ConcurrentHashMap<>();
 
     public EgtsProtocolDecoder(Protocol protocol) {
         super(protocol);
-        // Запускаем периодический опрос устройства каждую минуту
-        scheduler.scheduleAtFixedRate(this::pollDeviceState, 1, 1, TimeUnit.MINUTES);
     }
+
 
     private boolean useObjectIdAsDeviceId = true;
 
@@ -87,74 +87,44 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
 
     private int packetId;
 
-    /**
-     * Отправляет ответ на запрос устройства.
-     *
-     * @param channel     Канал для отправки ответа.
-     * @param packetType  Тип пакета (например, PT_RESPONSE).
-     * @param index       Индекс записи.
-     * @param serviceType Тип сервиса.
-     * @param type        Тип сообщения (например, MSG_RECORD_RESPONSE).
-     * @param content     Данные для отправки.
-     */
     private void sendResponse(Channel channel, int packetType, int index, int serviceType, int type, ByteBuf content) {
         if (channel != null) {
-            // Создаем данные для ответа
             ByteBuf data = Unpooled.buffer();
-            data.writeByte(type); // Тип сообщения (например, MSG_RECORD_RESPONSE)
-            data.writeShortLE(content.readableBytes()); // Длина данных
-            data.writeBytes(content); // Данные
+            data.writeByte(type);
+            data.writeShortLE(content.readableBytes());
+            data.writeBytes(content);
             content.release();
 
-            // Создаем запись (Record)
             ByteBuf record = Unpooled.buffer();
             if (packetType == PT_RESPONSE) {
-                record.writeShortLE(index); // Индекс записи
-                record.writeByte(0); // Успешное завершение (0x00)
+                record.writeShortLE(index);
+                record.writeByte(0); // success
             }
-            record.writeShortLE(data.readableBytes()); // Длина данных
-            record.writeShortLE(0); // Флаги записи
-            record.writeByte(0); // Флаги (возможно, 1 << 6)
-            record.writeByte(serviceType); // Тип сервиса
-            record.writeByte(serviceType); // Тип сервиса получателя
-            record.writeBytes(data); // Данные
+            record.writeShortLE(data.readableBytes());
+            record.writeShortLE(0);
+            record.writeByte(0);
+            record.writeByte(serviceType);
+            record.writeByte(serviceType);
+            record.writeBytes(data);
             data.release();
-
-            // Расчет контрольной суммы записи (CRC16)
             int recordChecksum = Checksum.crc16(Checksum.CRC16_CCITT_FALSE, record.nioBuffer());
 
-            // Создаем заголовок пакета (Header)
             ByteBuf response = Unpooled.buffer();
-            response.writeByte(1); // Версия протокола (0x01)
-            response.writeByte(0); // Идентификатор ключа безопасности (0x00)
-            response.writeByte(0); // Флаги (0x00)
-            response.writeByte(11); // Длина заголовка (0x0B)
-            response.writeByte(0); // Кодировка (0x00)
-            response.writeShortLE(record.readableBytes()); // Длина пакета
-            response.writeShortLE(packetId++); // Идентификатор пакета
-            response.writeByte(packetType); // Тип пакета (PT_RESPONSE)
-            response.writeByte(Checksum.crc8(Checksum.CRC8_EGTS, response.nioBuffer())); // Контрольная сумма заголовка (CRC8)
-            response.writeBytes(record); // Запись
+            response.writeByte(1); // protocol version
+            response.writeByte(0); // security key id
+            response.writeByte(0); // flags
+            response.writeByte(11); // header length
+            response.writeByte(0); // encoding
+            response.writeShortLE(record.readableBytes());
+            response.writeShortLE(packetId++);
+            response.writeByte(packetType);
+            response.writeByte(Checksum.crc8(Checksum.CRC8_EGTS, response.nioBuffer()));
+            response.writeBytes(record);
             record.release();
-            response.writeShortLE(recordChecksum); // Контрольная сумма записи (CRC16)
+            response.writeShortLE(recordChecksum);
 
-            // Отправляем ответ
             channel.writeAndFlush(new NetworkMessage(response, channel.remoteAddress()));
         }
-    }
-
-    /**
-     * Отправляет команду EGTS_FLEET_GET_STATE для опроса состояния устройства.
-     */
-    private void pollDeviceState() {
-        // Здесь можно добавить логику для отправки команды EGTS_FLEET_GET_STATE
-        // Например, если у вас есть канал устройства, вы можете отправить команду через него
-        // Пример:
-        // if (channel != null) {
-        //     ByteBuf command = Unpooled.buffer();
-        //     command.writeByte(MSG_STATE_DATA); // Тип сообщения
-        //     sendResponse(channel, PT_APPDATA, 0, SERVICE_COMMANDS, MSG_STATE_DATA, command);
-         //}
     }
 
     @Override
@@ -162,26 +132,26 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
         ByteBuf buf = (ByteBuf) msg;
         List<Position> positions = new LinkedList<>();
 
-        // Чтение заголовка пакета
         short headerLength = buf.getUnsignedByte(buf.readerIndex() + 3);
-        int packetId = buf.getUnsignedShort(buf.readerIndex() + 5 + 2);
+        int index = buf.getUnsignedShort(buf.readerIndex() + 5 + 2);
         short packetType = buf.getUnsignedByte(buf.readerIndex() + 5 + 2 + 2);
         buf.skipBytes(headerLength);
 
         if (packetType == PT_RESPONSE) {
-            return null; // Игнорируем ответы
+            return null;
         }
 
         long objectId = 0L;
+
         while (buf.readableBytes() > 2) {
             int length = buf.readUnsignedShortLE();
             int recordIndex = buf.readUnsignedShortLE();
             int recordFlags = buf.readUnsignedByte();
 
+            long currentObjectId = objectId;
             if (BitUtil.check(recordFlags, 0)) {
-                objectId = buf.readUnsignedIntLE();
+                currentObjectId = buf.readUnsignedIntLE();
             }
-
             if (BitUtil.check(recordFlags, 1)) {
                 buf.readUnsignedIntLE(); // event id
             }
@@ -190,76 +160,59 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
             }
 
             int serviceType = buf.readUnsignedByte();
-            buf.readUnsignedByte(); // recipient service type
+            buf.readUnsignedByte(); // recipient
 
             int recordEnd = buf.readerIndex() + length;
-
-            Position position = new Position(getProtocolName());
-            DeviceSession deviceSession = getDeviceSession(channel, remoteAddress);
-            if (deviceSession != null) {
-                position.setDeviceId(deviceSession.getDeviceId());
-            }
+            Position position = null;
 
             while (buf.readerIndex() < recordEnd) {
                 int type = buf.readUnsignedByte();
-                int end = buf.readUnsignedShortLE() + buf.readerIndex();
+                int subRecordLength = buf.readUnsignedShortLE();
+                int subRecordEnd = buf.readerIndex() + subRecordLength;
 
                 switch (type) {
                     case MSG_TERM_IDENTITY:
-                        // Обработка идентификации устройства
                         useObjectIdAsDeviceId = false;
-
                         buf.readUnsignedIntLE(); // object id
                         int flags = buf.readUnsignedByte();
 
-                        if (BitUtil.check(flags, 0)) {
-                            buf.readUnsignedShortLE(); // home dispatcher identifier
-                        }
-                        if (BitUtil.check(flags, 1)) {
-                            getDeviceSession(
-                                    channel, remoteAddress, buf.readSlice(15).toString(StandardCharsets.US_ASCII).trim());
-                        }
-                        if (BitUtil.check(flags, 2)) {
-                            getDeviceSession(
-                                    channel, remoteAddress, buf.readSlice(16).toString(StandardCharsets.US_ASCII).trim());
-                        }
-                        if (BitUtil.check(flags, 3)) {
-                            buf.skipBytes(3); // language identifier
-                        }
-                        if (BitUtil.check(flags, 5)) {
-                            buf.skipBytes(3); // network identifier
-                        }
-                        if (BitUtil.check(flags, 6)) {
-                            buf.readUnsignedShortLE(); // buffer size
-                        }
-                        if (BitUtil.check(flags, 7)) {
-                            getDeviceSession(
-                                    channel, remoteAddress, buf.readSlice(15).toString(StandardCharsets.US_ASCII).trim());
-                        }
+                        if (BitUtil.check(flags, 0)) buf.readUnsignedShortLE();
+                        if (BitUtil.check(flags, 1)) getDeviceSession(channel, remoteAddress,
+                                buf.readSlice(15).toString(StandardCharsets.US_ASCII).trim());
+                        if (BitUtil.check(flags, 2)) getDeviceSession(channel, remoteAddress,
+                                buf.readSlice(16).toString(StandardCharsets.US_ASCII).trim());
+                        if (BitUtil.check(flags, 3)) buf.skipBytes(3);
+                        if (BitUtil.check(flags, 5)) buf.skipBytes(3);
+                        if (BitUtil.check(flags, 6)) buf.readUnsignedShortLE();
+                        if (BitUtil.check(flags, 7)) getDeviceSession(channel, remoteAddress,
+                                buf.readSlice(15).toString(StandardCharsets.US_ASCII).trim());
 
                         ByteBuf response = Unpooled.buffer();
-                        response.writeByte(0); // success
-                        sendResponse(channel, PT_APPDATA, recordIndex, serviceType, MSG_RESULT_CODE, response);
+                        response.writeByte(0);
+                        sendResponse(channel, PT_APPDATA, 0, serviceType, MSG_RESULT_CODE, response);
                         break;
 
                     case MSG_POS_DATA:
-                        // Обработка координат
-                        position.setTime(new Date((buf.readUnsignedIntLE() + 1262304000) * 1000)); // since 2010-01-01
-                        position.setLatitude(buf.readUnsignedIntLE() * 90.0 / 0xFFFFFFFFL);
-                        position.setLongitude(buf.readUnsignedIntLE() * 180.0 / 0xFFFFFFFFL);
+                        position = new Position(getProtocolName());
+                        Date eventTime = new Date((buf.readUnsignedIntLE() + 1262304000L) * 1000);
+                        position.setTime(eventTime);
+
+                        double lat = buf.readUnsignedIntLE() * 90.0 / 0xFFFFFFFFL;
+                        double lon = buf.readUnsignedIntLE() * 180.0 / 0xFFFFFFFFL;
 
                         int posFlags = buf.readUnsignedByte();
                         position.setValid(BitUtil.check(posFlags, 0));
-                        if (BitUtil.check(posFlags, 5)) {
-                            position.setLatitude(-position.getLatitude());
-                        }
-                        if (BitUtil.check(posFlags, 6)) {
-                            position.setLongitude(-position.getLongitude());
-                        }
+                        if (BitUtil.check(posFlags, 5)) lat = -lat;
+                        if (BitUtil.check(posFlags, 6)) lon = -lon;
+                        position.setLatitude(lat);
+                        position.setLongitude(lon);
 
-                        int speed = buf.readUnsignedShortLE();
-                        position.setSpeed(UnitsConverter.knotsFromKph(BitUtil.to(speed, 14) * 0.1));
-                        position.setCourse(buf.readUnsignedByte() + (BitUtil.check(speed, 15) ? 0x100 : 0));
+                        int speedRaw = buf.readUnsignedShortLE();
+                        double speedKph = BitUtil.to(speedRaw, 14) * 0.1;
+                        position.setSpeed(UnitsConverter.knotsFromKph(speedKph));
+                        int course = buf.readUnsignedByte();
+                        if (BitUtil.check(speedRaw, 15)) course += 0x100;
+                        position.setCourse(course);
 
                         position.set(Position.KEY_ODOMETER, buf.readUnsignedMediumLE() * 100);
                         position.set(Position.KEY_INPUT, buf.readUnsignedByte());
@@ -271,167 +224,218 @@ public class EgtsProtocolDecoder extends BaseProtocolDecoder {
                         break;
 
                     case MSG_EXT_POS_DATA:
-                        // Обработка дополнительных данных о координатах
-                        int extPosFlags = buf.readUnsignedByte();
-
-                        if (BitUtil.check(extPosFlags, 0)) {
-                            position.set(Position.KEY_VDOP, buf.readUnsignedShortLE());
-                        }
-                        if (BitUtil.check(extPosFlags, 1)) {
-                            position.set(Position.KEY_HDOP, buf.readUnsignedShortLE());
-                        }
-                        if (BitUtil.check(extPosFlags, 2)) {
-                            position.set(Position.KEY_PDOP, buf.readUnsignedShortLE());
-                        }
-                        if (BitUtil.check(extPosFlags, 3)) {
-                            position.set(Position.KEY_SATELLITES, buf.readUnsignedByte());
-                        }
+                        int extFlags = buf.readUnsignedByte();
+                        if (BitUtil.check(extFlags, 0)) position.set(Position.KEY_VDOP, buf.readUnsignedShortLE());
+                        if (BitUtil.check(extFlags, 1)) position.set(Position.KEY_HDOP, buf.readUnsignedShortLE());
+                        if (BitUtil.check(extFlags, 2)) position.set(Position.KEY_PDOP, buf.readUnsignedShortLE());
+                        if (BitUtil.check(extFlags, 3)) position.set(Position.KEY_SATELLITES, buf.readUnsignedByte());
                         break;
 
                     case MSG_STATE_DATA:
-                        // Обработка данных о состоянии устройства
                         int stateFlags = buf.readUnsignedByte();
-
-                        if (BitUtil.check(stateFlags, 0)) {
-                            position.set(Position.KEY_BATTERY, buf.readUnsignedByte()); // Уровень заряда батареи
-                        }
-                        if (BitUtil.check(stateFlags, 1)) {
-                            position.set(Position.KEY_INPUT, buf.readUnsignedByte()); // Состояние входов
-                        }
-                        if (BitUtil.check(stateFlags, 2)) {
-                            position.set(Position.KEY_OUTPUT, buf.readUnsignedByte()); // Состояние выходов
-                        }
-                        if (BitUtil.check(stateFlags, 3)) {
-                            position.set("adc1", buf.readUnsignedShortLE()); // Значение АЦП 1
-                        }
-                        if (BitUtil.check(stateFlags, 4)) {
-                            position.set("adc2", buf.readUnsignedShortLE()); // Значение АЦП 2
+                        if (position != null) {
+                            if (BitUtil.check(stateFlags, 0)) position.set(Position.KEY_BATTERY, buf.readUnsignedByte());
+                            if (BitUtil.check(stateFlags, 1)) position.set(Position.KEY_INPUT, buf.readUnsignedByte());
+                            if (BitUtil.check(stateFlags, 2)) position.set(Position.KEY_OUTPUT, buf.readUnsignedByte());
+                            if (BitUtil.check(stateFlags, 3)) position.set("adc1", buf.readUnsignedShortLE());
+                            if (BitUtil.check(stateFlags, 4)) position.set("adc2", buf.readUnsignedShortLE());
+                        } else {
+                            // Skip data if no position
+                            int skipped = 0;
+                            if (BitUtil.check(stateFlags, 0)) skipped += 1;
+                            if (BitUtil.check(stateFlags, 1)) skipped += 1;
+                            if (BitUtil.check(stateFlags, 2)) skipped += 1;
+                            if (BitUtil.check(stateFlags, 3)) skipped += 2;
+                            if (BitUtil.check(stateFlags, 4)) skipped += 2;
+                            buf.skipBytes(skipped);
                         }
                         break;
 
-                    // Обработка других типов сообщений...
                     case MSG_AD_SENSORS_DATA:
-                        // Обработка данных аналоговых датчиков
                         int inputMask = buf.readUnsignedByte();
-
-                        position.set(Position.KEY_OUTPUT, buf.readUnsignedByte());
-
+                        if (position != null) {
+                            position.set(Position.KEY_OUTPUT, buf.readUnsignedByte());
+                        } else {
+                            buf.skipBytes(1);
+                        }
                         int adcMask = buf.readUnsignedByte();
 
+                        // Обработка дискретных входов (до 8 шт)
                         for (int i = 0; i < 8; i++) {
                             if (BitUtil.check(inputMask, i)) {
-                                buf.readUnsignedByte(); // input
+                                int inputValue = buf.readUnsignedByte();
+                                if (position != null) {
+                                    position.set("io" + (i + 1), inputValue != 0);
+                                }
                             }
                         }
 
+                        // Обработка аналоговых датчиков (ADC)
                         for (int i = 0; i < 8; i++) {
                             if (BitUtil.check(adcMask, i)) {
-                                position.set(Position.PREFIX_ADC + (i + 1), buf.readUnsignedMediumLE());
+                                if (position != null) {
+                                    position.set(Position.PREFIX_ADC + (i + 1), buf.readUnsignedMediumLE());
+                                } else {
+                                    buf.skipBytes(3);
+                                }
+                            }
+                        }
+                        break;
+
+                    case MSG_VEHICLE_DATA:
+                        int vFlags = buf.readUnsignedByte();
+                        if (BitUtil.check(vFlags, 0)) buf.skipBytes(2); // speed
+                        if (BitUtil.check(vFlags, 1)) { // voltage
+                            if (position != null) {
+                                position.set(Position.KEY_POWER, buf.readUnsignedShortLE() * 0.1);
+                            } else {
+                                buf.skipBytes(2);
+                            }
+                        }
+                        if (BitUtil.check(vFlags, 2)) { // odometer
+                            if (position != null) {
+                                position.set(Position.KEY_ODOMETER, buf.readUnsignedIntLE());
+                            } else {
+                                buf.skipBytes(4);
+                            }
+                        }
+                        break;
+
+                    case MSG_ABS_DIG_SENS_DATA:
+                        int digCount = buf.readUnsignedByte();
+                        for (int i = 0; i < digCount && buf.readerIndex() < subRecordEnd; i++) {
+                            int sensorId = buf.readUnsignedShortLE();
+                            int value = buf.readUnsignedByte();
+                            if (position != null) {
+                                position.set("can.digital." + sensorId, value != 0);
+                            }
+                        }
+                        break;
+
+                    case MSG_ABS_AN_SENS_DATA:
+                        int anCount = buf.readUnsignedByte();
+                        for (int i = 0; i < anCount && buf.readerIndex() < subRecordEnd; i++) {
+                            int sensorId = buf.readUnsignedShortLE();
+                            long value = buf.readUnsignedIntLE();
+                            if (position != null) {
+                                position.set("can.analog." + sensorId, value);
                             }
                         }
                         break;
 
                     case MSG_ABS_CNTR_DATA:
-                        // Обработка данных счетчиков
-                        int cntrFlags = buf.readUnsignedByte();
-
-                        if (BitUtil.check(cntrFlags, 0)) {
-                            position.set(Position.KEY_ODOMETER, buf.readUnsignedIntLE()); // Пробег
-                        }
-                        if (BitUtil.check(cntrFlags, 1)) {
-                            position.set("engineHours", buf.readUnsignedIntLE()); // Моточасы
-                        }
-                        if (BitUtil.check(cntrFlags, 2)) {
-                            position.set("fuelConsumption", buf.readUnsignedIntLE()); // Расход топлива
-                        }
-                        if (BitUtil.check(cntrFlags, 3)) {
-                            position.set("fuelLevel", buf.readUnsignedIntLE()); // Уровень топлива
-                        }
-                        if (BitUtil.check(cntrFlags, 4)) {
-                            position.set("fuelTemperature", buf.readUnsignedIntLE()); // Температура топлива
-                        }
-                        if (BitUtil.check(cntrFlags, 5)) {
-                            position.set("fuelPressure", buf.readUnsignedIntLE()); // Давление топлива
-                        }
-                        if (BitUtil.check(cntrFlags, 6)) {
-                            position.set("coolantTemperature", buf.readUnsignedIntLE()); // Температура охлаждающей жидкости
-                        }
-                        if (BitUtil.check(cntrFlags, 7)) {
-                            position.set("batteryVoltage", buf.readUnsignedShortLE()); // Напряжение аккумулятора
+                        int cntrCount = buf.readUnsignedByte();
+                        for (int i = 0; i < cntrCount && buf.readerIndex() < subRecordEnd; i++) {
+                            int sensorId = buf.readUnsignedShortLE();
+                            long value = buf.readLongLE();
+                            if (position != null) {
+                                position.set("can.counter." + sensorId, value);
+                            }
                         }
                         break;
 
                     case MSG_LIQUID_LEVEL_SENSOR:
-                        // Обработка данных датчиков уровня жидкости
                         int liquidFlags = buf.readUnsignedByte();
-                        int sensorAddress = buf.readUnsignedShortLE();
-
+                        int address = buf.readUnsignedShortLE();
+                        String key = "liquid." + String.format("%04d", address);
                         if (BitUtil.check(liquidFlags, 3)) {
-                            byte[] rawData = new byte[end - buf.readerIndex()];
-                            buf.readBytes(rawData);
-                            position.set("liquidRaw_" + sensorAddress, ByteBufUtil.hexDump(rawData));
+                            if (position != null) {
+                                position.set(key + "Raw", ByteBufUtil.hexDump(buf.readSlice(subRecordEnd - buf.readerIndex())));
+                            } else {
+                                buf.readerIndex(subRecordEnd);
+                            }
                         } else {
-                            int liquidLevel = buf.readIntLE();
-                            position.set("liquidLevel_" + sensorAddress, liquidLevel);
+                            if (position != null) {
+                                position.set(key, buf.readUnsignedIntLE());
+                            } else {
+                                buf.skipBytes(4);
+                            }
                         }
+                        break;
 
-                        while (buf.readerIndex() < end) {
-                            int nextType = buf.readUnsignedByte();
-                            int nextEnd = buf.readUnsignedShortLE() + buf.readerIndex();
 
-                            if (nextType == MSG_LIQUID_LEVEL_SENSOR) {
-                                int nextFlags = buf.readUnsignedByte();
-                                int nextSensorAddress = buf.readUnsignedShortLE();
+                    case MSG_AUTH_PARAMS:
+                        int authLength = buf.readUnsignedByte();
+                        if (authLength > 0 && authLength <= subRecordEnd - buf.readerIndex()) {
+                            String authId = buf.readSlice(authLength).toString(StandardCharsets.US_ASCII).trim();
+                            DeviceSession authSession = getDeviceSession(channel, remoteAddress, authId);
+                            if (authSession != null && currentObjectId != 0L) {
+                                objectSessionMap.put(currentObjectId, authSession);
+                            }
+                        }
+                        break;
 
-                                if (BitUtil.check(nextFlags, 3)) {
-                                    byte[] nextRawData = new byte[nextEnd - buf.readerIndex()];
-                                    buf.readBytes(nextRawData);
-                                    position.set("liquidRaw_" + nextSensorAddress, ByteBufUtil.hexDump(nextRawData));
+                    case MSG_AUTH_INFO:
+                        int authResult = buf.readUnsignedByte();
+                        if (authResult != 0) {
+                            logger.warn("EGTS authentication failed: {}", authResult);
+                        }
+                        break;
+
+                    case MSG_SERVICE_INFO:
+                        int serviceInfoLength = buf.readUnsignedByte();
+                        if (position != null && serviceInfoLength > 0) {
+                            String serviceInfo = buf.readSlice(Math.min(serviceInfoLength, subRecordEnd - buf.readerIndex()))
+                                    .toString(StandardCharsets.US_ASCII).trim();
+                            position.set("serviceInfo", serviceInfo);
+                        } else {
+                            buf.skipBytes(serviceInfoLength);
+                        }
+                        break;
+
+                    case MSG_LOOPIN_DATA:
+                        int loopinMask = buf.readUnsignedByte();
+                        for (int i = 0; i < 8; i++) {
+                            if (BitUtil.check(loopinMask, i)) {
+                                if (position != null) {
+                                    position.set("loopin" + (i + 1), buf.readUnsignedShortLE());
                                 } else {
-                                    int nextLiquidLevel = buf.readIntLE();
-                                    position.set("liquidLevel_" + nextSensorAddress, nextLiquidLevel);
+                                    buf.skipBytes(2);
                                 }
                             }
-
-                            buf.readerIndex(nextEnd);
                         }
                         break;
-                    //end Обработкаи других типов сообщений...
+
+                    case MSG_ABS_LOOPIN_DATA:
+                        int loopCount = buf.readUnsignedByte();
+                        for (int i = 0; i < loopCount && buf.readerIndex() < subRecordEnd; i++) {
+                            int sensorId = buf.readUnsignedShortLE();
+                            int value = buf.readUnsignedShortLE();
+                            if (position != null) {
+                                position.set("loopin.abs." + sensorId, value);
+                            }
+                        }
+                        break;
 
                     default:
-                        logger.warn("Unknown packet type: {}", type);
-                        break;
+                        logger.warn("Unknown EGTS subrecord type: {}", type);
+                        buf.readerIndex(subRecordEnd);
+                        continue;
                 }
 
-                buf.readerIndex(end);
+                buf.readerIndex(subRecordEnd);
             }
 
-            if (serviceType == SERVICE_TELEDATA && position.getValid()) {
-                if (useObjectIdAsDeviceId && objectId != 0L) {
-                    deviceSession = getDeviceSession(channel, remoteAddress, String.valueOf(objectId));
-                    if (deviceSession != null) {
-                        position.setDeviceId(deviceSession.getDeviceId());
-                    }
+            if (position != null && position.getValid()) {
+                DeviceSession deviceSession = null;
+                if (useObjectIdAsDeviceId && currentObjectId != 0L) {
+                    deviceSession = getDeviceSession(channel, remoteAddress, String.valueOf(currentObjectId));
+                } else {
+                    deviceSession = getDeviceSession(channel, remoteAddress);
                 }
+
                 if (deviceSession != null) {
+                    position.setDeviceId(deviceSession.getDeviceId());
                     positions.add(position);
+
+                    ByteBuf ack = Unpooled.buffer();
+                    ack.writeShortLE(recordIndex);
+                    ack.writeByte(0);
+                    sendResponse(channel, PT_RESPONSE, index, serviceType, MSG_RECORD_RESPONSE, ack);
                 }
             }
         }
 
-        // Отправляем подтверждение на уровне всего пакета
-        ByteBuf ackResponse = Unpooled.buffer();
-        ackResponse.writeShortLE(packetId); // Индекс пакета
-        ackResponse.writeByte(0); // Успешное завершение
-        sendResponse(channel, PT_RESPONSE, packetId, SERVICE_TELEDATA, MSG_RECORD_RESPONSE, ackResponse);
-
-        // Отправляем команду EGTS_SR_COMMAND_DATA
-        ByteBuf commandResponse = Unpooled.buffer();
-        commandResponse.writeByte(0); // Успешное завершение
-        sendResponse(channel, PT_APPDATA, packetId, SERVICE_COMMANDS, MSG_RECORD_RESPONSE, commandResponse);
-
         return positions.isEmpty() ? null : positions;
     }
 }
-
-
