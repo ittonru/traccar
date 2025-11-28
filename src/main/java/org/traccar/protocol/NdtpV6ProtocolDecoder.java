@@ -79,6 +79,22 @@ public class NdtpV6ProtocolDecoder extends BaseProtocolDecoder {
     private static final short MAIN_NAV_DATA = 0;
     private static final short ADDITIONAL_NAV_DATA = 2;
 
+    /**
+     * Normalizes a raw value by repeatedly dividing by 10 until it is <= maxValue.
+     * Then checks if it falls within the valid [minValue, maxValue] range.
+     * Returns null if invalid, otherwise the normalized value.
+     */
+    private static Double normalizeAndValidate(double rawValue, double minValue, double maxValue) {
+        double value = rawValue;
+        while (value > maxValue) {
+            value /= 10.0;
+        }
+        if (value >= minValue && value <= maxValue) {
+            return value;
+        }
+        return null; // discard invalid
+    }
+
     private void decodeData(ByteBuf buf, Position position) {
 
         short itemType;
@@ -98,7 +114,13 @@ public class NdtpV6ProtocolDecoder extends BaseProtocolDecoder {
                 position.addAlarm(Position.ALARM_GENERAL);
             }
 
-            position.set(Position.KEY_BATTERY, buf.readUnsignedByte() * 20);
+            //position.set(Position.KEY_BATTERY, buf.readUnsignedByte() * 20);
+            double rawBattery = buf.readUnsignedByte() * 20.0;
+            Double validBattery = normalizeAndValidate(rawBattery, 3.0, 4.5);
+            if (validBattery != null) {
+                position.set(Position.KEY_BATTERY, validBattery);
+            }
+            // else: skip invalid battery
             position.set(Position.KEY_OBD_SPEED, buf.readUnsignedShortLE());
             position.setSpeed(UnitsConverter.knotsFromKph(buf.readUnsignedShortLE()));
             position.setCourse(buf.readUnsignedShortLE());
@@ -129,7 +151,13 @@ public class NdtpV6ProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.KEY_ANTENNA, buf.readUnsignedByte());
             position.set(Position.KEY_GPS, buf.readUnsignedByte());
             position.set(Position.KEY_ACCELERATION, buf.readUnsignedByte());
-            position.set(Position.KEY_POWER, buf.readUnsignedByte() * 200);
+            //position.set(Position.KEY_POWER, buf.readUnsignedByte() * 200);
+            double rawPower = buf.readUnsignedByte() * 200.0;
+            Double validPower = normalizeAndValidate(rawPower, 1.0, 50.0);
+            if (validPower != null) {
+                position.set(Position.KEY_POWER, validPower);
+            }
+            // else: skip invalid power
         }
     }
 
